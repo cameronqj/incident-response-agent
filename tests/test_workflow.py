@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from incident_response_agent.schemas import Decision, DecisionRequest, EventRequest
+from incident_response_agent.schemas import Decision, DecisionRequest
 from incident_response_agent.service import ConflictError, ExpiredError, InvalidTransitionError
+from conftest import make_event
 
 
 def test_end_to_end_requires_bound_approval_and_executes(service):
@@ -11,7 +12,7 @@ def test_end_to_end_requires_bound_approval_and_executes(service):
     (sandbox / "logs").mkdir(parents=True)
     (sandbox / "logs" / "service.1.rotated").write_text("synthetic", encoding="utf-8")
 
-    run = incident.start_event(EventRequest(idempotency_key="event-1", payload={"scenario": "disk"}))
+    run = incident.start_event(make_event("event-1"))
     assert run.state.value == "proposed"
     assert run.proposal is not None
     proposal = run.proposal
@@ -29,7 +30,7 @@ def test_end_to_end_requires_bound_approval_and_executes(service):
 
 def test_duplicate_same_payload_returns_existing_run(service):
     incident, _, _ = service
-    event = EventRequest(idempotency_key="same", payload={"scenario": "disk", "value": 1})
+    event = make_event("same", summary="same event")
     first = incident.start_event(event)
     duplicate = incident.start_event(event)
     assert duplicate.run_id == first.run_id
@@ -38,14 +39,14 @@ def test_duplicate_same_payload_returns_existing_run(service):
 
 def test_duplicate_different_payload_conflicts(service):
     incident, _, _ = service
-    incident.start_event(EventRequest(idempotency_key="same", payload={"value": 1}))
+    incident.start_event(make_event("same", summary="first event"))
     with pytest.raises(ConflictError):
-        incident.start_event(EventRequest(idempotency_key="same", payload={"value": 2}))
+        incident.start_event(make_event("same", summary="different event"))
 
 
 def test_approval_hash_cannot_be_reused_for_modified_revision(service):
     incident, _, _ = service
-    run = incident.start_event(EventRequest(idempotency_key="hash", payload={}))
+    run = incident.start_event(make_event("hash"))
     assert run.proposal is not None
     proposal = run.proposal
     with pytest.raises(ConflictError):
@@ -54,7 +55,7 @@ def test_approval_hash_cannot_be_reused_for_modified_revision(service):
 
 def test_revision_creates_new_immutable_proposal(service):
     incident, _, _ = service
-    run = incident.start_event(EventRequest(idempotency_key="revision", payload={}))
+    run = incident.start_event(make_event("revision"))
     assert run.proposal is not None
     original = run.proposal
     revised = incident.decide(original.proposal_id, DecisionRequest(decision=Decision.REVISE, revision=1, action_hash=original.action_hash, note="include rotation failure context"))
@@ -66,7 +67,7 @@ def test_revision_creates_new_immutable_proposal(service):
 
 def test_expiration_prevents_approval(service):
     incident, clock, _ = service
-    run = incident.start_event(EventRequest(idempotency_key="expire", payload={}))
+    run = incident.start_event(make_event("expire"))
     assert run.proposal is not None
     proposal = run.proposal
     clock.advance(61)
@@ -77,7 +78,7 @@ def test_expiration_prevents_approval(service):
 
 def test_audit_redacts_sensitive_fields(service):
     incident, _, _ = service
-    run = incident.start_event(EventRequest(idempotency_key="audit", payload={"secret": "not persisted in audit"}))
+    run = incident.start_event(make_event("audit", context=[{"key": "secret", "value": "not persisted in audit"}]))
     audit = run.audit
     assert all("not persisted in audit" not in str(item.metadata) for item in audit)
     assert any(item.event_type == "model_completed" for item in audit)

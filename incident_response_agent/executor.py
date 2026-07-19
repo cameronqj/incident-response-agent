@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import re
+import os
 import shutil
 import subprocess
-from pathlib import Path
+import uuid
 from typing import Protocol
 
+from .sandbox import DisposableSandbox, SandboxViolation
 from .schemas import RemediationOption
 
 
@@ -20,12 +22,22 @@ class ExecutionResult:
 class RemediationExecutor(Protocol):
     def execute(self, option: RemediationOption) -> ExecutionResult: ...
 
+    def close(self) -> None: ...
+
+
+class DisabledExecutor:
+    def execute(self, option: RemediationOption) -> ExecutionResult:
+        return ExecutionResult(False, "remediation execution is disabled", failure_reason_code="execution_disabled")
+
+    def close(self) -> None:
+        pass
+
 
 class DisposableFilesystemExecutor:
     """Resolves targets in code; it accepts no model-provided path or command."""
 
-    def __init__(self, sandbox_root: str):
-        self.sandbox_root = Path(sandbox_root).resolve()
+    def __init__(self, sandbox: DisposableSandbox):
+        self.sandbox = sandbox
 
     def execute(self, option: RemediationOption) -> ExecutionResult:
         if option.action_id not in {
@@ -37,10 +49,9 @@ class DisposableFilesystemExecutor:
         }:
             return ExecutionResult(False, "action is not authorized", failure_reason_code="unauthorized_action")
         try:
+            self.sandbox.validate()
             if option.action_id == "cleanup_rotated_logs":
-                target = (self.sandbox_root / "logs").resolve()
-                if self.sandbox_root not in target.parents:
-                    return ExecutionResult(False, "sandbox target escaped root", failure_reason_code="sandbox_escape")
+                target = self.sandbox.resolve_child("logs")
                 target.mkdir(parents=True, exist_ok=True)
                 deleted = 0
                 for candidate in target.iterdir():
@@ -49,27 +60,21 @@ class DisposableFilesystemExecutor:
                         deleted += 1
                 return ExecutionResult(True, "rotated log cleanup completed", deleted_count=deleted)
             if option.action_id == "stop_runaway_process":
-                marker = (self.sandbox_root / "processes" / "runaway_cpu.marker").resolve()
-                if self.sandbox_root not in marker.parents:
-                    return ExecutionResult(False, "sandbox target escaped root", failure_reason_code="sandbox_escape")
+                marker = self.sandbox.resolve_child("processes/runaway_cpu.marker")
                 deleted = int(marker.is_file())
                 if deleted:
                     marker.unlink()
-                return ExecutionResult(True, "runaway process fixture stopped", deleted_count=deleted)
+                return ExecutionResult(True, "runaway-CPU marker fixture cleared", deleted_count=deleted)
             if option.action_id == "stop_memory_hog":
-                marker = (self.sandbox_root / "memory" / "memory_hog.marker").resolve()
-                if self.sandbox_root not in marker.parents:
-                    return ExecutionResult(False, "sandbox target escaped root", failure_reason_code="sandbox_escape")
+                marker = self.sandbox.resolve_child("memory/memory_hog.marker")
                 deleted = int(marker.is_file())
                 if deleted:
                     marker.unlink()
-                return ExecutionResult(True, "memory-hog fixture stopped", deleted_count=deleted)
+                return ExecutionResult(True, "memory-pressure marker fixture cleared", deleted_count=deleted)
             if option.action_id == "cleanup_log_storm_temp_files":
                 deleted = 0
                 for relative_root, suffixes in (("logs/storm", {".storm"}), ("tmp", {".tmp"})):
-                    target = (self.sandbox_root / relative_root).resolve()
-                    if self.sandbox_root not in target.parents:
-                        return ExecutionResult(False, "sandbox target escaped root", failure_reason_code="sandbox_escape")
+                    target = self.sandbox.resolve_child(relative_root)
                     if not target.is_dir():
                         continue
                     for candidate in target.iterdir():
@@ -77,17 +82,20 @@ class DisposableFilesystemExecutor:
                             candidate.unlink()
                             deleted += 1
                 return ExecutionResult(True, "log-storm temporary-file cleanup completed", deleted_count=deleted)
-            services = (self.sandbox_root / "services").resolve()
-            if self.sandbox_root not in services.parents:
-                return ExecutionResult(False, "sandbox target escaped root", failure_reason_code="sandbox_escape")
+            services = self.sandbox.resolve_child("services")
             services.mkdir(parents=True, exist_ok=True)
             loop_marker = services / "restart_loop.marker"
             if loop_marker.exists():
                 loop_marker.unlink()
             (services / "healthy.marker").write_text("healthy", encoding="utf-8")
-            return ExecutionResult(True, "disposable service restarted", deleted_count=1)
+            return ExecutionResult(True, "restart-loop marker fixture reset", deleted_count=1)
+        except SandboxViolation:
+            return ExecutionResult(False, "sandbox validation failed", failure_reason_code="unsafe_sandbox_root")
         except OSError:
             return ExecutionResult(False, "cleanup failed", failure_reason_code="filesystem_error")
+
+    def close(self) -> None:
+        self.sandbox.close()
 
 
 CONTAINER_ACTION_SCRIPTS = {
@@ -156,8 +164,10 @@ print(f'cleanup_log_storm_temp_files deleted={deleted}')
 class ContainerRemediationExecutor:
     """Execute only the fixed allowlisted cleanup inside an isolated container."""
 
-    def __init__(self, sandbox_root: str, image: str = "python:3.12-alpine", engine: str | None = None, timeout_seconds: float = 30.0):
-        self.sandbox_root = Path(sandbox_root).resolve()
+    def __init__(self, sandbox: DisposableSandbox, image: str, engine: str | None = None, timeout_seconds: float = 30.0):
+        if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", image):
+            raise ValueError("container image must be pinned by sha256 digest")
+        self.sandbox = sandbox
         self.image = image
         self.engine = engine or shutil.which("podman") or shutil.which("docker")
         self.timeout_seconds = timeout_seconds
@@ -166,26 +176,40 @@ class ContainerRemediationExecutor:
         script = CONTAINER_ACTION_SCRIPTS.get(option.action_id)
         if script is None:
             return ExecutionResult(False, "action is not authorized", failure_reason_code="unauthorized_action")
-        if self.sandbox_root == Path("/") or self.sandbox_root.parent == self.sandbox_root:
-            return ExecutionResult(False, "sandbox root is not bounded", failure_reason_code="unsafe_sandbox_root")
         if not self.engine:
             return ExecutionResult(False, "container engine unavailable", failure_reason_code="container_engine_unavailable")
-        logs_root = self.sandbox_root / "logs"
+        container_name = f"incident-agent-{uuid.uuid4().hex}"
+        process_uid = os.geteuid() if hasattr(os, "geteuid") else 65532
+        process_gid = os.getegid() if hasattr(os, "getegid") else 65532
+        uid = process_uid if process_uid != 0 else 65532
+        gid = process_gid if process_uid != 0 else 65532
         try:
-            logs_root.mkdir(parents=True, exist_ok=True)
-            logs_root.chmod(0o777)
+            self.sandbox.validate()
+            if process_uid == 0:
+                self.sandbox.root.chmod(0o711)
+                for relative in ("logs", "logs/storm", "tmp", "processes", "memory", "services"):
+                    directory = self.sandbox.resolve_child(relative)
+                    directory.mkdir(parents=True, exist_ok=True)
+                    directory.chmod(0o777)
             command = [
                 self.engine,
                 "run",
                 "--rm",
+                "--pull=missing",
+                "--name",
+                container_name,
                 "--network=none",
                 "--read-only",
+                "--cpus=0.5",
+                "--memory=128m",
+                "--memory-swap=128m",
+                "--pids-limit=64",
                 "--cap-drop=ALL",
                 "--security-opt=no-new-privileges",
                 "--user",
-                "65532:65532",
+                f"{uid}:{gid}",
                 "--mount",
-                f"type=bind,src={self.sandbox_root},dst=/incident-sandbox,rw",
+                f"type=bind,src={self.sandbox.root},dst=/incident-sandbox,rw",
                 "--tmpfs",
                 "/tmp:rw,noexec,nosuid,size=16m",
                 self.image,
@@ -196,10 +220,28 @@ class ContainerRemediationExecutor:
             result = subprocess.run(command, capture_output=True, text=True, timeout=self.timeout_seconds, check=False)
         except subprocess.TimeoutExpired:
             return ExecutionResult(False, "container cleanup timed out", failure_reason_code="execution_timeout")
+        except SandboxViolation:
+            return ExecutionResult(False, "sandbox validation failed", failure_reason_code="unsafe_sandbox_root")
         except OSError:
             return ExecutionResult(False, "container execution failed", failure_reason_code="container_runtime_error")
+        finally:
+            try:
+                subprocess.run(
+                    [self.engine, "rm", "-f", container_name],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            if process_uid == 0 and self.sandbox.root.exists():
+                self.sandbox.root.chmod(0o700)
         if result.returncode != 0:
             return ExecutionResult(False, "container cleanup failed", failure_reason_code="container_exit_nonzero")
         match = re.search(r"deleted=(\d+)", result.stdout)
         deleted = int(match.group(1)) if match else 0
         return ExecutionResult(True, "container cleanup completed", deleted_count=deleted)
+
+    def close(self) -> None:
+        self.sandbox.close()

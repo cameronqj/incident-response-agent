@@ -7,7 +7,9 @@ import subprocess
 import pytest
 
 from incident_response_agent.executor import ContainerRemediationExecutor
-from incident_response_agent.schemas import RemediationOption
+from incident_response_agent.sandbox import DisposableSandbox
+from incident_response_agent.schemas import RemediationOption, ScenarioKind
+from conftest import TEST_IMAGE
 
 
 @pytest.mark.integration
@@ -52,7 +54,7 @@ print(f'recovered after {written} bytes')
             "65532:65532",
             "--mount",
             "type=tmpfs,destination=/lab,tmpfs-size=2097152,tmpfs-mode=1777",
-            "python:3.12-alpine",
+            TEST_IMAGE,
             "python",
             "-c",
             "import os; assert os.geteuid() != 0\n" + script,
@@ -64,6 +66,7 @@ print(f'recovered after {written} bytes')
     )
     assert result.returncode == 0, result.stderr
     assert "recovered after" in result.stdout
+    assert ScenarioKind.CONTAINER_FAULT.value == "container_fault"
 
 
 @pytest.mark.integration
@@ -92,7 +95,7 @@ def test_memory_pressure_hits_hard_container_limit():
             "65532:65532",
             "--tmpfs",
             "/tmp:rw,noexec,nosuid,size=16m",
-            "python:3.12-alpine",
+            TEST_IMAGE,
             "python",
             "-c",
             "chunks=[]; [chunks.append(bytearray(1024 * 1024)) for _ in range(128)]",
@@ -103,6 +106,7 @@ def test_memory_pressure_hits_hard_container_limit():
         check=False,
     )
     assert result.returncode in {137, -9}, result.stderr
+    assert ScenarioKind.CONTAINER_FAULT.value == "container_fault"
 
 
 @pytest.mark.integration
@@ -116,35 +120,36 @@ def test_agent_remediation_executes_inside_container(tmp_path, action_id):
     health = subprocess.run([engine, "info"], capture_output=True, text=True, timeout=20, check=False)
     if health.returncode != 0:
         pytest.fail(f"container engine is installed but unavailable: {health.stderr.strip()}")
+    sandbox = DisposableSandbox.create_test_fixture(tmp_path)
     if action_id == "cleanup_rotated_logs":
-        marker_root = tmp_path / "logs"
+        marker_root = sandbox.root / "logs"
         marker = marker_root / "service.1.rotated"
         marker_root.mkdir()
         marker.write_text("synthetic artifact", encoding="utf-8")
     elif action_id == "stop_runaway_process":
-        marker_root = tmp_path / "processes"
+        marker_root = sandbox.root / "processes"
         marker = marker_root / "runaway_cpu.marker"
         marker_root.mkdir()
         marker.write_text("synthetic artifact", encoding="utf-8")
     elif action_id == "stop_memory_hog":
-        marker_root = tmp_path / "memory"
+        marker_root = sandbox.root / "memory"
         marker = marker_root / "memory_hog.marker"
         marker_root.mkdir()
         marker.write_text("synthetic artifact", encoding="utf-8")
     elif action_id == "cleanup_log_storm_temp_files":
-        marker_root = tmp_path / "logs" / "storm"
+        marker_root = sandbox.root / "logs" / "storm"
         marker = marker_root / "service.1.storm"
         marker_root.mkdir(parents=True)
         marker.write_text("synthetic artifact", encoding="utf-8")
-        temp_root = tmp_path / "tmp"
+        temp_root = sandbox.root / "tmp"
         temp_root.mkdir()
         (temp_root / "cache.tmp").write_text("synthetic artifact", encoding="utf-8")
     else:
-        marker_root = tmp_path / "services"
+        marker_root = sandbox.root / "services"
         marker = marker_root / "restart_loop.marker"
         marker_root.mkdir()
         marker.write_text("synthetic artifact", encoding="utf-8")
-    result = ContainerRemediationExecutor(str(tmp_path), engine=engine).execute(
+    result = ContainerRemediationExecutor(sandbox, TEST_IMAGE, engine=engine).execute(
         RemediationOption(
             action_id=action_id,
             title=action_id,
@@ -158,6 +163,6 @@ def test_agent_remediation_executes_inside_container(tmp_path, action_id):
     assert result.success, result.failure_reason_code
     assert not marker.exists()
     if action_id == "cleanup_log_storm_temp_files":
-        assert not (tmp_path / "tmp" / "cache.tmp").exists()
+        assert not (sandbox.root / "tmp" / "cache.tmp").exists()
     if action_id == "restart_disposable_service":
-        assert (tmp_path / "services" / "healthy.marker").exists()
+        assert (sandbox.root / "services" / "healthy.marker").exists()

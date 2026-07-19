@@ -1,10 +1,28 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+class Scenario(str, Enum):
+    DISK_EXHAUSTION = "disk-exhaustion"
+    RUNAWAY_CPU = "runaway-cpu"
+    MEMORY_OOM = "memory-oom"
+    RESTARTING_SERVICE = "restarting-service"
+    LOG_STORM = "log-storm"
+
+
+class ScenarioKind(str, Enum):
+    SYNTHETIC_MARKER = "synthetic_marker"
+    CONTAINER_FAULT = "container_fault"
+
+
+class EventSource(str, Enum):
+    LOCAL_SIMULATION = "local_simulation"
 
 
 class RunState(str, Enum):
@@ -37,19 +55,55 @@ class Decision(str, Enum):
     REVISE = "revise"
 
 
+ShortText = Annotated[str, Field(max_length=500)]
+
+
+class EventContextField(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$")
+    value: ShortText
+
+
+class EventPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scenario: Scenario
+    summary: Optional[ShortText] = None
+    log_lines: List[ShortText] = Field(default_factory=list, max_length=20)
+    context: List[EventContextField] = Field(default_factory=list, max_length=20)
+
+
 class EventRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    idempotency_key: str = Field(min_length=1, max_length=256)
-    event_type: str = Field(default="incident.detected", min_length=1, max_length=128)
-    payload: Dict[str, Any] = Field(default_factory=dict)
-    trace_id: Optional[str] = Field(default=None, max_length=128)
+    idempotency_key: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
+    source: EventSource
+    observed_at: datetime
+    event_type: str = Field(default="incident.detected", pattern=r"^incident\.detected$")
+    payload: EventPayload
+    trace_id: Optional[str] = Field(default=None, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
+
+    @field_validator("observed_at")
+    @classmethod
+    def observed_at_must_be_timezone_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("observed_at must include a timezone")
+        return value
+
+    @model_validator(mode="after")
+    def payload_must_be_bounded(self) -> "EventRequest":
+        encoded = json.dumps(self.model_dump(mode="json"), separators=(",", ":")).encode("utf-8")
+        if len(encoded) > 16_384:
+            raise ValueError("event payload exceeds 16384 bytes")
+        return self
 
 
 class TelemetryEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    scenario: str
+    scenario: Scenario
+    scenario_kind: ScenarioKind = ScenarioKind.SYNTHETIC_MARKER
     rotation_failed: bool
     free_bytes: int = Field(ge=0)
     log_growth_bytes_per_minute: int = Field(ge=0)
@@ -102,6 +156,8 @@ class ProposalView(BaseModel):
     run_id: str
     revision: int
     status: ProposalState
+    scenario: Scenario
+    scenario_kind: ScenarioKind
     assessment: ModelAssessment
     option: RemediationOption
     action_hash: str

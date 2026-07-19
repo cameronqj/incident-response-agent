@@ -7,10 +7,12 @@ import pytest
 
 from incident_response_agent.executor import ContainerRemediationExecutor
 from incident_response_agent.model import FakeAnalyzer
-from incident_response_agent.schemas import Decision, DecisionRequest, EventRequest
+from incident_response_agent.sandbox import DisposableSandbox
+from incident_response_agent.schemas import Decision, DecisionRequest
 from incident_response_agent.service import IncidentService
 from incident_response_agent.storage import SQLiteStore
 from incident_response_agent.telemetry import ScenarioTelemetryCollector
+from conftest import TEST_IMAGE, make_event
 
 
 @pytest.mark.integration
@@ -29,30 +31,32 @@ def test_scenario_runs_through_agent_and_container(tmp_path, scenario, marker_di
     engine = shutil.which("podman") or shutil.which("docker")
     if not engine:
         pytest.fail("RUN_CONTAINER_TESTS=1 requires Docker or Podman")
-    marker_root = tmp_path / marker_dir
+    sandbox = DisposableSandbox.create_test_fixture(tmp_path)
+    marker_root = sandbox.root / marker_dir
     marker_root.mkdir(parents=True)
     marker = marker_root / marker_name
     marker.write_text("synthetic fault", encoding="utf-8")
     if scenario == "log-storm":
-        temp_root = tmp_path / "tmp"
+        temp_root = sandbox.root / "tmp"
         temp_root.mkdir()
         (temp_root / "cache.tmp").write_text("synthetic artifact", encoding="utf-8")
     incident = IncidentService(
         SQLiteStore(":memory:"),
         ScenarioTelemetryCollector(),
         FakeAnalyzer(),
-        ContainerRemediationExecutor(str(tmp_path), engine=engine),
+        ContainerRemediationExecutor(sandbox, TEST_IMAGE, engine=engine),
     )
 
-    run = incident.start_event(EventRequest(idempotency_key=f"container-{scenario}", payload={"scenario": scenario}))
+    run = incident.start_event(make_event(f"container-{scenario}", scenario))
     assert run.proposal is not None
     proposal = run.proposal
+    assert proposal.scenario_kind.value == "synthetic_marker"
     approved = incident.decide(proposal.proposal_id, DecisionRequest(decision=Decision.APPROVE, revision=proposal.revision, action_hash=proposal.action_hash))
     assert approved.state.value == "approved"
     completed = incident.execute(proposal.proposal_id)
     assert completed.state.value == "succeeded"
     assert not marker.exists()
     if scenario == "log-storm":
-        assert not (tmp_path / "tmp" / "cache.tmp").exists()
+        assert not (sandbox.root / "tmp" / "cache.tmp").exists()
     if scenario == "restarting-service":
         assert (marker_root / "healthy.marker").exists()

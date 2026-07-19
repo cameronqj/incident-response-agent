@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from incident_response_agent.schemas import Decision, DecisionRequest, EventRequest
+from incident_response_agent.schemas import Decision, DecisionRequest
+from conftest import make_event
 
 
 @pytest.mark.parametrize(
@@ -25,11 +26,12 @@ def test_scenario_proposes_and_recovers_with_allowlisted_action(service, scenari
         temp_root.mkdir()
         (temp_root / "cache.tmp").write_text("synthetic artifact", encoding="utf-8")
 
-    run = incident.start_event(EventRequest(idempotency_key=f"scenario-{scenario}", payload={"scenario": scenario}))
+    run = incident.start_event(make_event(f"scenario-{scenario}", scenario))
     assert run.proposal is not None
     proposal = run.proposal
     assert proposal.assessment.action_id == expected_action
     assert proposal.option.action_id == expected_action
+    assert proposal.scenario_kind.value == "synthetic_marker"
 
     approved = incident.decide(proposal.proposal_id, DecisionRequest(decision=Decision.APPROVE, revision=proposal.revision, action_hash=proposal.action_hash))
     completed = incident.execute(proposal.proposal_id)

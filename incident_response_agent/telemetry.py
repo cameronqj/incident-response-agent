@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from .schemas import EventRequest, TelemetryEvidence
+from .schemas import EventRequest, Scenario, ScenarioKind, TelemetryEvidence
 
 
 class TelemetryCollector(Protocol):
@@ -14,7 +14,8 @@ class SyntheticDiskExhaustionTelemetry:
 
     def collect(self, event: EventRequest) -> TelemetryEvidence:
         return TelemetryEvidence(
-            scenario="failed-log-rotation-disk-exhaustion",
+            scenario=Scenario.DISK_EXHAUSTION,
+            scenario_kind=ScenarioKind.SYNTHETIC_MARKER,
             rotation_failed=True,
             free_bytes=4096,
             log_growth_bytes_per_minute=8_388_608,
@@ -29,7 +30,8 @@ class SyntheticRunawayCPUTelemetry:
 
     def collect(self, event: EventRequest) -> TelemetryEvidence:
         return TelemetryEvidence(
-            scenario="runaway-cpu",
+            scenario=Scenario.RUNAWAY_CPU,
+            scenario_kind=ScenarioKind.SYNTHETIC_MARKER,
             rotation_failed=False,
             free_bytes=1_048_576,
             log_growth_bytes_per_minute=0,
@@ -46,7 +48,8 @@ class SyntheticRestartingServiceTelemetry:
 
     def collect(self, event: EventRequest) -> TelemetryEvidence:
         return TelemetryEvidence(
-            scenario="restarting-service",
+            scenario=Scenario.RESTARTING_SERVICE,
+            scenario_kind=ScenarioKind.SYNTHETIC_MARKER,
             rotation_failed=False,
             free_bytes=1_048_576,
             log_growth_bytes_per_minute=0,
@@ -63,7 +66,8 @@ class SyntheticMemoryOOMTelemetry:
 
     def collect(self, event: EventRequest) -> TelemetryEvidence:
         return TelemetryEvidence(
-            scenario="memory-oom",
+            scenario=Scenario.MEMORY_OOM,
+            scenario_kind=ScenarioKind.SYNTHETIC_MARKER,
             rotation_failed=False,
             free_bytes=1_048_576,
             log_growth_bytes_per_minute=0,
@@ -80,7 +84,8 @@ class SyntheticLogStormTelemetry:
 
     def collect(self, event: EventRequest) -> TelemetryEvidence:
         return TelemetryEvidence(
-            scenario="log-storm",
+            scenario=Scenario.LOG_STORM,
+            scenario_kind=ScenarioKind.SYNTHETIC_MARKER,
             rotation_failed=False,
             free_bytes=65_536,
             log_growth_bytes_per_minute=67_108_864,
@@ -97,18 +102,15 @@ class ScenarioTelemetryCollector:
 
     def __init__(self):
         self.adapters = {
-            "failed-log-rotation-disk-exhaustion": SyntheticDiskExhaustionTelemetry(),
-            "disk-exhaustion": SyntheticDiskExhaustionTelemetry(),
-            "disk": SyntheticDiskExhaustionTelemetry(),
-            "runaway-cpu": SyntheticRunawayCPUTelemetry(),
-            "restarting-service": SyntheticRestartingServiceTelemetry(),
-            "memory-oom": SyntheticMemoryOOMTelemetry(),
-            "oom": SyntheticMemoryOOMTelemetry(),
-            "log-storm": SyntheticLogStormTelemetry(),
+            Scenario.DISK_EXHAUSTION: SyntheticDiskExhaustionTelemetry(),
+            Scenario.RUNAWAY_CPU: SyntheticRunawayCPUTelemetry(),
+            Scenario.RESTARTING_SERVICE: SyntheticRestartingServiceTelemetry(),
+            Scenario.MEMORY_OOM: SyntheticMemoryOOMTelemetry(),
+            Scenario.LOG_STORM: SyntheticLogStormTelemetry(),
         }
 
     def collect(self, event: EventRequest) -> TelemetryEvidence:
-        scenario = str(event.payload.get("scenario", "failed-log-rotation-disk-exhaustion"))
+        scenario = event.payload.scenario
         adapter = self.adapters.get(scenario)
         if adapter is None:
             raise ValueError(f"unsupported synthetic scenario: {scenario}")
