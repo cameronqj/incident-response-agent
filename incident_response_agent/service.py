@@ -108,7 +108,7 @@ class IncidentService:
             current = self.store.get_run(run_id)
             if current and current["state"] != RunState.FAILED.value:
                 self._state(run_id, trace_id, RunState.FAILED, "workflow exception")
-            self._audit(run_id, trace_id, "run_failed", {"failure_reason_code": type(exc).__name__})
+            self._audit(run_id, trace_id, "run_failed", {"failure_reason_code": getattr(exc, "reason_code", type(exc).__name__)})
             raise
         return self.get_run(run_id)
 
@@ -165,7 +165,9 @@ class IncidentService:
         self.store.update_proposal(proposal_id, ProposalState.EXECUTING.value)
         self._state(run["run_id"], run["trace_id"], RunState.EXECUTING, "explicit execution requested", proposal_id)
         try:
-            result = self.executor.execute(RemediationOption.model_validate(proposal["option"]))
+            option = RemediationOption.model_validate(proposal["option"])
+            self._audit(run["run_id"], run["trace_id"], "tool_call", {"tool": "remediation_executor", "action_id": option.action_id}, proposal_id)
+            result = self.executor.execute(option)
             final_proposal = ProposalState.SUCCEEDED if result.success else ProposalState.FAILED
             final_run = RunState.SUCCEEDED if result.success else RunState.FAILED
             self.store.update_proposal(proposal_id, final_proposal.value)
@@ -174,7 +176,7 @@ class IncidentService:
         except Exception as exc:
             self.store.update_proposal(proposal_id, ProposalState.FAILED.value)
             self._state(run["run_id"], run["trace_id"], RunState.FAILED, "executor exception", proposal_id)
-            self._audit(run["run_id"], run["trace_id"], "execution_result", {"success": False, "failure_reason_code": type(exc).__name__}, proposal_id)
+            self._audit(run["run_id"], run["trace_id"], "execution_result", {"success": False, "failure_reason_code": getattr(exc, "reason_code", type(exc).__name__)}, proposal_id)
         return self.get_run(run["run_id"])
 
     def expire_due(self) -> int:

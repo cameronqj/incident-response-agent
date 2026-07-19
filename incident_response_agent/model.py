@@ -22,6 +22,12 @@ class Analyzer(Protocol):
     def analyze(self, evidence: TelemetryEvidence, revision_note: Optional[str] = None) -> ModelResult: ...
 
 
+class ModelAnalysisError(RuntimeError):
+    def __init__(self, reason_code: str, message: str):
+        super().__init__(message)
+        self.reason_code = reason_code
+
+
 class FakeAnalyzer:
     def analyze(self, evidence: TelemetryEvidence, revision_note: Optional[str] = None) -> ModelResult:
         return ModelResult(
@@ -79,6 +85,7 @@ class LiveOpenAICompatibleAnalyzer:
         )
         user: Dict[str, Any] = {"evidence": evidence.model_dump(mode="json"), "revision_note": revision_note}
         last_error: Optional[Exception] = None
+        last_reason_code = "model_analysis_failed"
         started = time.monotonic()
         for retry in range(self.max_retries + 1):
             try:
@@ -122,6 +129,18 @@ class LiveOpenAICompatibleAnalyzer:
                 usage = body.get("usage") or {}
                 tokens = int(usage.get("total_tokens", 0) or 0)
                 return ModelResult(assessment, int((time.monotonic() - started) * 1000), tokens, retry)
-            except (urllib.error.URLError, TimeoutError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            except urllib.error.HTTPError as exc:
                 last_error = exc
-        raise RuntimeError(f"live model analysis failed after bounded retries: {last_error}")
+                last_reason_code = "model_transient_http" if exc.code in {408, 409, 425, 429} or exc.code >= 500 else "model_provider_rejected"
+                if last_reason_code == "model_provider_rejected":
+                    break
+            except urllib.error.URLError as exc:
+                last_error = exc
+                last_reason_code = "model_transport_failure"
+            except TimeoutError as exc:
+                last_error = exc
+                last_reason_code = "model_timeout"
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                last_error = exc
+                last_reason_code = "model_schema_validation_failure"
+        raise ModelAnalysisError(last_reason_code, f"live model analysis failed after bounded retries: {last_error}")

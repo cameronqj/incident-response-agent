@@ -24,6 +24,7 @@ def test_end_to_end_requires_bound_approval_and_executes(service):
     completed = incident.execute(proposal.proposal_id)
     assert completed.state.value == "succeeded"
     assert not (sandbox / "logs" / "service.1.rotated").exists()
+    assert any(item.event_type == "tool_call" for item in completed.audit)
 
 
 def test_duplicate_same_payload_returns_existing_run(service):

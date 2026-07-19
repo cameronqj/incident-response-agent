@@ -17,4 +17,4 @@ This provides a real webhook-to-assessment-to-human-approval-to-recovery workflo
 
 ## Consequences
 
-The first release does not implement CPU, memory/OOM, restarting-service, or log-storm scenarios. It also does not claim production safety, autonomous remediation, or general model-provider compatibility.
+The initial disk-exhaustion slice was subsequently expanded by ADR 002 to cover CPU, memory/OOM, restarting-service, and log-storm scenarios. The project still does not claim production safety, autonomous remediation, or general model-provider compatibility.

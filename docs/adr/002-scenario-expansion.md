@@ -15,4 +15,4 @@ These scenarios exercise process-utilization, service-health, memory-pressure, a
 
 ## Consequences
 
-CPU, service, memory-pressure, and log-storm recovery now have deterministic and container integration evidence. The memory scenario uses a deterministic fixture rather than relying on platform-specific OOM-kill behavior; realistic resource-limit tests remain a future enhancement.
+CPU, service, memory-pressure, and log-storm recovery now have deterministic and container integration evidence. The workflow uses a deterministic memory-pressure fixture, while the container failure lab separately verifies a bounded 32 MiB OOM kill under hard resource limits.

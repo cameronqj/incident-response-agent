@@ -67,6 +67,45 @@ print(f'recovered after {written} bytes')
 
 
 @pytest.mark.integration
+def test_memory_pressure_hits_hard_container_limit():
+    if os.getenv("RUN_CONTAINER_TESTS") != "1":
+        pytest.skip("set RUN_CONTAINER_TESTS=1 to run container integration")
+    engine = shutil.which("podman") or shutil.which("docker")
+    if not engine:
+        pytest.fail("RUN_CONTAINER_TESTS=1 requires Docker or Podman")
+    health = subprocess.run([engine, "info"], capture_output=True, text=True, timeout=20, check=False)
+    if health.returncode != 0:
+        pytest.fail(f"container engine is installed but unavailable: {health.stderr.strip()}")
+    result = subprocess.run(
+        [
+            engine,
+            "run",
+            "--rm",
+            "--network=none",
+            "--read-only",
+            "--memory=32m",
+            "--memory-swap=32m",
+            "--pids-limit=64",
+            "--cap-drop=ALL",
+            "--security-opt=no-new-privileges",
+            "--user",
+            "65532:65532",
+            "--tmpfs",
+            "/tmp:rw,noexec,nosuid,size=16m",
+            "python:3.12-alpine",
+            "python",
+            "-c",
+            "chunks=[]; [chunks.append(bytearray(1024 * 1024)) for _ in range(128)]",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode in {137, -9}, result.stderr
+
+
+@pytest.mark.integration
 @pytest.mark.parametrize("action_id", ["cleanup_rotated_logs", "stop_runaway_process", "restart_disposable_service", "stop_memory_hog", "cleanup_log_storm_temp_files"])
 def test_agent_remediation_executes_inside_container(tmp_path, action_id):
     if os.getenv("RUN_CONTAINER_TESTS") != "1":
