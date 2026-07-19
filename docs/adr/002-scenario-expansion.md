@@ -15,4 +15,4 @@ These scenarios exercise process-utilization, service-health, memory-pressure, a
 
 ## Consequences
 
-CPU, service, memory-pressure, and log-storm marker removal provides workflow and policy evidence, not real process or service remediation. The failure lab separately verifies genuine bounded ENOSPC and 32 MiB OOM behavior under hard container limits.
+CPU, service, memory-pressure, and log-storm marker removal provides workflow and policy evidence, not real process or service remediation. The failure lab separately verifies genuine bounded ENOSPC and 32 MiB OOM behavior under hard container limits. ADR 004 later adds a distinct `container_fault` service action that restarts one internally owned disposable container; it does not reinterpret this synthetic marker action.

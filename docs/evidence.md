@@ -8,11 +8,11 @@
 
 | Evidence | Command | Result | Scenario kind |
 | --- | --- | --- | --- |
-| Offline workflow, security, persistence, and concurrency | `.venv/bin/python -m pytest -m 'not integration and not live'` | 76 passed | `synthetic_marker` |
-| Podman/Docker failure lab and remediation container | `RUN_CONTAINER_TESTS=1 .venv/bin/python -m pytest -m integration` | 11 passed | `container_fault` and `synthetic_marker` |
-| Generic OpenAI-compatible inference | `RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live` | 1 passed | live integration |
+| Offline workflow, security, persistence, and concurrency | `.venv/bin/python -m pytest -m 'not integration and not live'` | 98 passed | `synthetic_marker` plus container-policy simulation |
+| Podman/Docker failure lab and remediation | `RUN_CONTAINER_TESTS=1 .venv/bin/python -m pytest -m 'integration and not live'` | 12 passed | `container_fault` and `synthetic_marker` |
+| Generic inference plus real service recovery | `RUN_CONTAINER_TESTS=1 RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live` | 2 passed | live integration |
 
-The ENOSPC and OOM failure-lab checks are genuine bounded container faults. CPU, service, memory, disk-remediation, and log-storm agent workflows use marker files and prove workflow, policy, approval, execution, persistence, and audit behavior only.
+The ENOSPC and OOM failure-lab checks are genuine bounded container faults, but they remain separate from the agent workflow. CPU, memory, disk-remediation, log-storm, and the original restarting-service agent scenarios use synthetic evidence or marker files. The new service lab is a real bounded agent cycle: the owned HTTP service returns 503 and reports OCI `unhealthy`; no restart occurs before exact approval; execution restarts the same container ID; its second boot returns 200 and reports `healthy`; cleanup verifies removal.
 
 ## Live-inference observation
 
@@ -20,7 +20,8 @@ The ENOSPC and OOM failure-lab checks are genuine bounded container faults. CPU,
 - Configured endpoint: `https://opencode.ai/zen/go/v1`
 - Model: `deepseek-v4-flash`
 - Real external model: yes
-- Successful run: 4,722 ms, 988 tokens, 0 retries
-- Observed variability: an earlier run passed; a subsequent run failed after three bounded attempts returned empty content; the final verification passed without retry after increasing the bounded response allowance.
+- Disk workflow: 5,558 ms, 1,019 tokens, 0 retries
+- Real disposable-service workflow: 4,817 ms, 1,000 tokens, 0 retries
+- Observed variability: an earlier historical run failed after three bounded attempts returned empty content; both current verification paths passed without retry.
 
-This proves one configured OpenAI-compatible request/assessment/approval/container-execution cycle. It does not prove provider reliability, general compatibility, deterministic model behavior, production webhook handling, real-host detection, or production remediation safety.
+This proves configured OpenAI-compatible assessment in both the disk flow and a real disposable-service restart flow. It does not prove provider reliability, general compatibility, deterministic model behavior, production webhook handling, real-host detection, arbitrary-container safety, or production remediation safety.

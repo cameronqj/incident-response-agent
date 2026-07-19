@@ -24,4 +24,4 @@ jobs:
       - name: Container failure lab
         env:
           RUN_CONTAINER_TESTS: "1"
-        run: .venv/bin/python -m pytest -m integration
+        run: .venv/bin/python -m pytest -m 'integration and not live'
