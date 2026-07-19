@@ -7,16 +7,36 @@ import subprocess
 import uuid
 from typing import Protocol
 
+from .container_lab import ContainerLabError, DisposableContainerService
 from .sandbox import DisposableSandbox, SandboxViolation
 from .schemas import RemediationOption
 
 
 class ExecutionResult:
-    def __init__(self, success: bool, message: str, deleted_count: int = 0, failure_reason_code: str | None = None):
+    def __init__(
+        self,
+        success: bool,
+        message: str,
+        deleted_count: int = 0,
+        failure_reason_code: str | None = None,
+        *,
+        service_restarted: bool = False,
+        health_before: str | None = None,
+        health_after: str | None = None,
+        attempts: int = 0,
+        latency_ms: int = 0,
+        boot_count: int = 0,
+    ):
         self.success = success
         self.message = message
         self.deleted_count = deleted_count
         self.failure_reason_code = failure_reason_code
+        self.service_restarted = service_restarted
+        self.health_before = health_before
+        self.health_after = health_after
+        self.attempts = attempts
+        self.latency_ms = latency_ms
+        self.boot_count = boot_count
 
 
 class RemediationExecutor(Protocol):
@@ -31,6 +51,34 @@ class DisabledExecutor:
 
     def close(self) -> None:
         pass
+
+
+class DisposableServiceRestartExecutor:
+    """Restart only the exact service represented by an owned lab capability."""
+
+    def __init__(self, target: DisposableContainerService):
+        self.target = target
+
+    def execute(self, option: RemediationOption) -> ExecutionResult:
+        if option.action_id != "restart_unhealthy_container_service":
+            return ExecutionResult(False, "action is not authorized", failure_reason_code="unauthorized_action")
+        try:
+            observation = self.target.restart_and_wait()
+        except ContainerLabError as exc:
+            return ExecutionResult(False, "disposable service restart failed", failure_reason_code=exc.reason_code)
+        return ExecutionResult(
+            True,
+            "disposable service restarted and verified healthy",
+            service_restarted=True,
+            health_before=observation.health_before,
+            health_after=observation.health_after,
+            attempts=observation.attempts,
+            latency_ms=observation.latency_ms,
+            boot_count=observation.boot_count,
+        )
+
+    def close(self) -> None:
+        self.target.close()
 
 
 class DisposableFilesystemExecutor:

@@ -4,12 +4,13 @@ import os
 import shutil
 
 from .config import Settings
-from .executor import ContainerRemediationExecutor, DisabledExecutor
+from .container_lab import DisposableContainerService
+from .executor import ContainerRemediationExecutor, DisabledExecutor, DisposableServiceRestartExecutor
 from .model import FakeAnalyzer, LiveOpenAICompatibleAnalyzer
 from .service import IncidentService
 from .sandbox import DisposableSandbox
 from .storage import SQLiteStore
-from .telemetry import DeterministicENOSPCTelemetry
+from .telemetry import ContainerServiceTelemetry, DeterministicENOSPCTelemetry
 
 
 def build_service(settings: Settings | None = None) -> IncidentService:
@@ -24,19 +25,38 @@ def build_service(settings: Settings | None = None) -> IncidentService:
     else:
         analyzer = FakeAnalyzer()
     execution_engine = settings.execution_engine
-    if not settings.execution_enabled:
+    engine = execution_engine if execution_engine in {"podman", "docker"} else shutil.which("podman") or shutil.which("docker")
+    if settings.lab_mode == "container-service":
+        target = DisposableContainerService(
+            DisposableSandbox.create_runtime(),
+            settings.container_image,
+            engine or "",
+            settings.execution_timeout_seconds,
+        )
+        try:
+            target.start()
+        except Exception:
+            store.close()
+            raise
+        telemetry = ContainerServiceTelemetry(target)
+        executor = DisposableServiceRestartExecutor(target)
+    elif not settings.execution_enabled:
+        telemetry = DeterministicENOSPCTelemetry()
         executor = DisabledExecutor()
     elif execution_engine == "podman":
+        telemetry = DeterministicENOSPCTelemetry()
         executor = ContainerRemediationExecutor(DisposableSandbox.create_runtime(), settings.container_image, "podman", settings.execution_timeout_seconds)
     elif execution_engine == "docker":
+        telemetry = DeterministicENOSPCTelemetry()
         executor = ContainerRemediationExecutor(DisposableSandbox.create_runtime(), settings.container_image, "docker", settings.execution_timeout_seconds)
     elif execution_engine == "container":
+        telemetry = DeterministicENOSPCTelemetry()
         executor = ContainerRemediationExecutor(DisposableSandbox.create_runtime(), settings.container_image, shutil.which("podman") or shutil.which("docker"), settings.execution_timeout_seconds)
     else:
         raise ValueError("EXECUTION_ENGINE must be podman, docker, or container")
     return IncidentService(
         store=store,
-        telemetry=DeterministicENOSPCTelemetry(),
+        telemetry=telemetry,
         analyzer=analyzer,
         executor=executor,
         proposal_ttl_seconds=settings.proposal_ttl_seconds,

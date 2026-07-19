@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,10 +35,65 @@ def demo() -> None:
         sandbox.close()
 
 
+def container_service_demo() -> None:
+    settings = replace(Settings.from_env(), lab_mode="container-service", execution_enabled=True)
+    settings.validate()
+    service = build_service(settings)
+    try:
+        run = service.start_event(
+            EventRequest.model_validate(
+                {
+                    "idempotency_key": f"container-service-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}",
+                    "source": "local_simulation",
+                    "observed_at": datetime.now(timezone.utc),
+                    "payload": {"scenario": "restarting-service", "summary": "owned disposable service is unhealthy"},
+                }
+            ),
+            actor="container-service-demo",
+        )
+        assert run.proposal is not None
+        proposal = run.proposal
+        print(
+            json.dumps(
+                {
+                    "phase": "proposal",
+                    "run_id": run.run_id,
+                    "proposal_id": proposal.proposal_id,
+                    "revision": proposal.revision,
+                    "action_hash": proposal.action_hash,
+                    "scenario_kind": proposal.scenario_kind.value,
+                    "option": proposal.option.model_dump(mode="json"),
+                },
+                indent=2,
+            )
+        )
+        response = input("Type approve to restart this exact disposable service proposal: ").strip().lower()
+        decision = Decision.APPROVE if response == "approve" else Decision.REJECT
+        decided = service.decide(
+            proposal.proposal_id,
+            DecisionRequest(decision=decision, revision=proposal.revision, action_hash=proposal.action_hash),
+            actor="container-service-demo",
+        )
+        if decision == Decision.REJECT:
+            print(json.dumps({"phase": "rejected", "state": decided.state.value}, indent=2))
+            return
+        completed = service.execute(proposal.proposal_id, actor="container-service-demo")
+        result_record = next(record for record in completed.audit if record.event_type == "execution_result")
+        print(
+            json.dumps(
+                {"phase": "executed", "state": completed.state.value, "execution": result_record.metadata},
+                indent=2,
+            )
+        )
+    finally:
+        service.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="incident-response")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("demo", help="run the offline disk-exhaustion demo")
+    subparsers.add_parser("container-service-demo", help="detect and restart one owned disposable service")
     serve_parser = subparsers.add_parser("serve", help="run the FastAPI service")
     serve_parser.add_argument("--host", default=None)
     serve_parser.add_argument("--port", type=int, default=8000)
@@ -45,13 +101,19 @@ def main() -> None:
     if args.command == "demo":
         demo()
         return
+    if args.command == "container-service-demo":
+        container_service_demo()
+        return
     import uvicorn
 
     settings = Settings.from_env()
     if args.host:
         settings = replace(settings, host=args.host)
         settings.validate()
-    uvicorn.run(create_app(build_service(settings), settings), host=settings.host, port=args.port, reload=False)
+        os.environ["HOST"] = args.host
+    from .app import app
+
+    uvicorn.run(app, host=settings.host, port=args.port, reload=False)
 
 
 if __name__ == "__main__":

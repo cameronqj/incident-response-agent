@@ -7,8 +7,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Protocol
 
-from .policy import SCENARIO_ACTIONS
-from .schemas import ModelAssessment, Scenario, TelemetryEvidence
+from .policy import allowed_actions
+from .schemas import ModelAssessment, Scenario, ScenarioKind, TelemetryEvidence
 
 
 @dataclass(frozen=True)
@@ -46,15 +46,12 @@ class FakeAnalyzer:
 
     @staticmethod
     def _action_id(evidence: TelemetryEvidence) -> str:
-        return {
-            Scenario.RUNAWAY_CPU: "stop_runaway_process",
-            Scenario.RESTARTING_SERVICE: "restart_disposable_service",
-            Scenario.MEMORY_OOM: "stop_memory_hog",
-            Scenario.LOG_STORM: "cleanup_log_storm_temp_files",
-        }.get(evidence.scenario, "cleanup_rotated_logs")
+        return next(iter(allowed_actions(evidence.scenario, evidence.scenario_kind)))
 
     @staticmethod
     def _summary(evidence: TelemetryEvidence) -> str:
+        if evidence.scenario_kind == ScenarioKind.CONTAINER_FAULT:
+            return "A real owned disposable service container is unhealthy and requires one bounded restart."
         if evidence.scenario == Scenario.RUNAWAY_CPU:
             return "Synthetic marker evidence represents a sustained high-CPU incident for workflow testing."
         if evidence.scenario == Scenario.RESTARTING_SERVICE:
@@ -75,7 +72,7 @@ class LiveOpenAICompatibleAnalyzer:
         self.max_retries = max_retries
 
     def analyze(self, evidence: TelemetryEvidence, revision_note: Optional[str] = None) -> ModelResult:
-        permitted_actions = sorted(SCENARIO_ACTIONS[evidence.scenario])
+        permitted_actions = sorted(allowed_actions(evidence.scenario, evidence.scenario_kind))
         system = (
             "You are an incident assessment analyst. Return exactly one JSON object with exactly these keys: "
             "summary (string), severity (one of low, medium, high, critical), confidence (number from 0 to 1), "
@@ -85,6 +82,7 @@ class LiveOpenAICompatibleAnalyzer:
             "\"action_id\":\"cleanup_rotated_logs\"}. Never return shell commands, executable paths, "
             "file paths, or arbitrary parameters. The policy layer resolves targets."
             " Treat synthetic_marker evidence as workflow-test evidence and do not claim real host detection or recovery."
+            " Treat container_fault evidence as bounded disposable-container evidence, not real-host or production-service evidence."
             " Emit the JSON object immediately without analysis, preamble, or markdown."
         )
         user: Dict[str, Any] = {"evidence": evidence.model_dump(mode="json"), "revision_note": revision_note}

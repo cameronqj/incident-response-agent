@@ -5,7 +5,7 @@ import json
 import pytest
 
 from conftest import make_event
-from incident_response_agent.policy import SCENARIO_ACTIONS, SafetyViolation, action_hash, build_option
+from incident_response_agent.policy import SCENARIO_KIND_ACTIONS, SafetyViolation, action_hash, build_option
 from incident_response_agent.schemas import DecisionRequest, ModelAssessment, RemediationOption, Scenario, ScenarioKind
 from incident_response_agent.service import ConflictError
 
@@ -21,35 +21,56 @@ def _assessment(action_id: str) -> ModelAssessment:
 
 
 @pytest.mark.parametrize(
-    ("scenario", "action_id"),
-    [(scenario, next(iter(actions))) for scenario, actions in SCENARIO_ACTIONS.items()],
+    ("scenario_key", "action_id"),
+    [(scenario_key, next(iter(actions))) for scenario_key, actions in SCENARIO_KIND_ACTIONS.items()],
 )
-def test_every_scenario_accepts_its_deterministic_action(scenario, action_id):
-    option = build_option(scenario, _assessment(action_id))
+def test_every_scenario_accepts_its_deterministic_action(scenario_key, action_id):
+    scenario, scenario_kind = scenario_key
+    option = build_option(scenario, scenario_kind, _assessment(action_id))
     assert option.action_id == action_id
 
 
 @pytest.mark.parametrize(
-    ("scenario", "action_id"),
+    ("scenario_key", "action_id"),
     [
-        (scenario, action)
-        for scenario in Scenario
-        for other_scenario, actions in SCENARIO_ACTIONS.items()
-        if other_scenario != scenario
+        (scenario_key, action)
+        for scenario_key in SCENARIO_KIND_ACTIONS
+        for other_key, actions in SCENARIO_KIND_ACTIONS.items()
+        if other_key != scenario_key
         for action in actions
+        if action not in SCENARIO_KIND_ACTIONS[scenario_key]
     ],
 )
-def test_cross_scenario_actions_are_rejected(scenario, action_id):
+def test_cross_scenario_actions_are_rejected(scenario_key, action_id):
+    scenario, scenario_kind = scenario_key
     with pytest.raises(SafetyViolation):
-        build_option(scenario, _assessment(action_id))
+        build_option(scenario, scenario_kind, _assessment(action_id))
 
 
 def test_action_digest_binds_scenario_and_scenario_kind():
-    option = build_option(Scenario.DISK_EXHAUSTION, _assessment("cleanup_rotated_logs"))
+    option = build_option(Scenario.DISK_EXHAUSTION, ScenarioKind.SYNTHETIC_MARKER, _assessment("cleanup_rotated_logs"))
     marker_digest = action_hash(1, Scenario.DISK_EXHAUSTION, ScenarioKind.SYNTHETIC_MARKER, option)
     fault_digest = action_hash(1, Scenario.DISK_EXHAUSTION, ScenarioKind.CONTAINER_FAULT, option)
     other_scenario_digest = action_hash(1, Scenario.LOG_STORM, ScenarioKind.SYNTHETIC_MARKER, option)
     assert len({marker_digest, fault_digest, other_scenario_digest}) == 3
+
+
+def test_real_and_marker_service_restart_actions_cannot_authorize_each_other():
+    marker = build_option(
+        Scenario.RESTARTING_SERVICE,
+        ScenarioKind.SYNTHETIC_MARKER,
+        _assessment("restart_disposable_service"),
+    )
+    real = build_option(
+        Scenario.RESTARTING_SERVICE,
+        ScenarioKind.CONTAINER_FAULT,
+        _assessment("restart_unhealthy_container_service"),
+    )
+    assert marker.action_id != real.action_id
+    with pytest.raises(SafetyViolation):
+        build_option(Scenario.RESTARTING_SERVICE, ScenarioKind.CONTAINER_FAULT, _assessment(marker.action_id))
+    with pytest.raises(SafetyViolation):
+        build_option(Scenario.RESTARTING_SERVICE, ScenarioKind.SYNTHETIC_MARKER, _assessment(real.action_id))
 
 
 def test_cross_scenario_proposal_cannot_be_approved_even_with_recomputed_digest(service):

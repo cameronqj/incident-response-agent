@@ -77,6 +77,19 @@ def test_token_is_hidden_from_settings_repr_and_image_must_be_immutable():
         Settings(bearer_token=TEST_TOKEN, execution_enabled=True, container_image="python:3.12-alpine").validate()
 
 
+def test_container_service_lab_requires_execution_and_token():
+    with pytest.raises(ConfigurationError):
+        Settings(lab_mode="container-service", execution_enabled=False, bearer_token=TEST_TOKEN).validate()
+    with pytest.raises(ConfigurationError):
+        Settings(lab_mode="container-service", execution_enabled=True, bearer_token=None).validate()
+    Settings(lab_mode="container-service", execution_enabled=True, bearer_token=TEST_TOKEN).validate()
+
+
+def test_unknown_lab_mode_is_rejected():
+    with pytest.raises(ConfigurationError):
+        Settings(lab_mode="host-services").validate()
+
+
 def test_execution_enabled_environment_flag_is_strict(monkeypatch, tmp_path):
     monkeypatch.setenv("EXECUTION_ENABLED", "true")
     monkeypatch.setenv("APP_MODE", "demo")

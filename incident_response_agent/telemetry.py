@@ -2,11 +2,41 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from .container_lab import ContainerLabError, DisposableContainerService
 from .schemas import EventRequest, Scenario, ScenarioKind, TelemetryEvidence
 
 
 class TelemetryCollector(Protocol):
     def collect(self, event: EventRequest) -> TelemetryEvidence: ...
+
+
+class ContainerServiceTelemetry:
+    """Inspect only one internally owned disposable service container."""
+
+    def __init__(self, target: DisposableContainerService):
+        self.target = target
+
+    def collect(self, event: EventRequest) -> TelemetryEvidence:
+        if event.payload.scenario != Scenario.RESTARTING_SERVICE:
+            raise ContainerLabError(
+                "unsupported_container_lab_scenario",
+                "container-service lab accepts only the restarting-service scenario",
+            )
+        snapshot = self.target.snapshot()
+        if snapshot.health_status != "unhealthy":
+            raise ContainerLabError("target_not_unhealthy", "disposable service is not unhealthy")
+        return TelemetryEvidence(
+            scenario=Scenario.RESTARTING_SERVICE,
+            scenario_kind=ScenarioKind.CONTAINER_FAULT,
+            rotation_failed=False,
+            free_bytes=1_048_576,
+            log_growth_bytes_per_minute=0,
+            affected_file_count=0,
+            service_state=snapshot.health_status,
+            restart_count=max(0, snapshot.boot_count - 1),
+            signals=["container_healthcheck_failed", "service_unhealthy"],
+            fault_injection="DISPOSABLE_SERVICE_HTTP_503",
+        )
 
 
 class SyntheticDiskExhaustionTelemetry:

@@ -26,6 +26,12 @@ ALLOWED_ACTIONS: Dict[str, Dict[str, str]] = {
         "risk": "Low: fixed-scope marker changes inside the disposable incident sandbox only.",
         "preview": "Reset synthetic service markers; no real service is restarted.",
     },
+    "restart_unhealthy_container_service": {
+        "title": "Restart the unhealthy disposable service",
+        "impact": "Restarts the exact owned disposable service container and verifies its bounded health check.",
+        "risk": "Low: one internally created container target; no host or caller-selected service is reachable.",
+        "preview": "Restart the owned disposable service once and wait for its health status to become healthy.",
+    },
     "stop_memory_hog": {
         "title": "Clear the memory-pressure marker fixture",
         "impact": "Clears the fixed marker used to exercise the memory-pressure workflow.",
@@ -40,12 +46,13 @@ ALLOWED_ACTIONS: Dict[str, Dict[str, str]] = {
     },
 }
 
-SCENARIO_ACTIONS: Dict[Scenario, FrozenSet[str]] = {
-    Scenario.DISK_EXHAUSTION: frozenset({"cleanup_rotated_logs"}),
-    Scenario.RUNAWAY_CPU: frozenset({"stop_runaway_process"}),
-    Scenario.MEMORY_OOM: frozenset({"stop_memory_hog"}),
-    Scenario.RESTARTING_SERVICE: frozenset({"restart_disposable_service"}),
-    Scenario.LOG_STORM: frozenset({"cleanup_log_storm_temp_files"}),
+SCENARIO_KIND_ACTIONS: Dict[tuple[Scenario, ScenarioKind], FrozenSet[str]] = {
+    (Scenario.DISK_EXHAUSTION, ScenarioKind.SYNTHETIC_MARKER): frozenset({"cleanup_rotated_logs"}),
+    (Scenario.RUNAWAY_CPU, ScenarioKind.SYNTHETIC_MARKER): frozenset({"stop_runaway_process"}),
+    (Scenario.MEMORY_OOM, ScenarioKind.SYNTHETIC_MARKER): frozenset({"stop_memory_hog"}),
+    (Scenario.RESTARTING_SERVICE, ScenarioKind.SYNTHETIC_MARKER): frozenset({"restart_disposable_service"}),
+    (Scenario.RESTARTING_SERVICE, ScenarioKind.CONTAINER_FAULT): frozenset({"restart_unhealthy_container_service"}),
+    (Scenario.LOG_STORM, ScenarioKind.SYNTHETIC_MARKER): frozenset({"cleanup_log_storm_temp_files"}),
 }
 
 
@@ -53,16 +60,25 @@ class SafetyViolation(ValueError):
     pass
 
 
-def validate_scenario_action(scenario: Scenario, action_id: str) -> None:
-    if action_id not in SCENARIO_ACTIONS[scenario]:
-        raise SafetyViolation(f"action {action_id} is not authorized for scenario {scenario.value}")
+def allowed_actions(scenario: Scenario, scenario_kind: ScenarioKind) -> FrozenSet[str]:
+    actions = SCENARIO_KIND_ACTIONS.get((scenario, scenario_kind))
+    if actions is None:
+        raise SafetyViolation(f"scenario {scenario.value} does not support evidence kind {scenario_kind.value}")
+    return actions
 
 
-def build_option(scenario: Scenario, assessment: ModelAssessment) -> RemediationOption:
+def validate_scenario_action(scenario: Scenario, scenario_kind: ScenarioKind, action_id: str) -> None:
+    if action_id not in allowed_actions(scenario, scenario_kind):
+        raise SafetyViolation(
+            f"action {action_id} is not authorized for scenario {scenario.value} and evidence kind {scenario_kind.value}"
+        )
+
+
+def build_option(scenario: Scenario, scenario_kind: ScenarioKind, assessment: ModelAssessment) -> RemediationOption:
     definition = ALLOWED_ACTIONS.get(assessment.action_id)
     if definition is None:
         raise SafetyViolation(f"model selected an action outside the allowlist: {assessment.action_id}")
-    validate_scenario_action(scenario, assessment.action_id)
+    validate_scenario_action(scenario, scenario_kind, assessment.action_id)
     return RemediationOption(
         action_id=assessment.action_id,
         title=definition["title"],

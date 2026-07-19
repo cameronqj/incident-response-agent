@@ -136,7 +136,7 @@ class IncidentService:
             result = self.analyzer.analyze(evidence)
             self._audit(run_id, trace_id, "model_completed", {"latency_ms": result.latency_ms, "token_count": result.token_count, "retry_count": result.retry_count}, actor)
             self.store.transition_run(run_id, RunState.INVESTIGATING.value, RunState.ASSESSED.value, self.clock.now().isoformat(), trace_id, "structured assessment validated", actor)
-            option = build_option(evidence.scenario, result.assessment)
+            option = build_option(evidence.scenario, evidence.scenario_kind, result.assessment)
             proposal_id = str(uuid.uuid4())
             created_at = self.clock.now()
             expires = created_at + timedelta(seconds=self.proposal_ttl_seconds)
@@ -171,7 +171,7 @@ class IncidentService:
         scenario_kind = ScenarioKind(proposal["scenario_kind"])
         stored_option = RemediationOption.model_validate(proposal["option"])
         try:
-            validate_scenario_action(scenario, stored_option.action_id)
+            validate_scenario_action(scenario, scenario_kind, stored_option.action_id)
         except SafetyViolation as exc:
             raise ConflictError(str(exc)) from exc
         if action_hash(proposal["revision"], scenario, scenario_kind, stored_option) != proposal["action_hash"]:
@@ -182,7 +182,7 @@ class IncidentService:
             assessment = ModelAssessment.model_validate(proposal["assessment"])
             if request.note:
                 assessment = assessment.model_copy(update={"summary": f"{assessment.summary} Revision requested: {sanitize_text(request.note)}"})
-            option = build_option(scenario, assessment)
+            option = build_option(scenario, scenario_kind, assessment)
             new_revision = proposal["revision"] + 1
             expires = now + timedelta(seconds=self.proposal_ttl_seconds)
             new_proposal = {
@@ -225,7 +225,7 @@ class IncidentService:
         scenario_kind = ScenarioKind(proposal["scenario_kind"])
         option = RemediationOption.model_validate(proposal["option"])
         try:
-            validate_scenario_action(scenario, option.action_id)
+            validate_scenario_action(scenario, scenario_kind, option.action_id)
         except SafetyViolation as exc:
             raise ConflictError(str(exc)) from exc
         digest = action_hash(proposal["revision"], scenario, scenario_kind, option)
@@ -240,7 +240,19 @@ class IncidentService:
         assert claimed is not None
         run = self.store.get_run(claimed["run_id"])
         assert run is not None
-        self._audit(run["run_id"], run["trace_id"], "tool_call", {"tool": "remediation_executor", "action_id": option.action_id, "scenario": scenario.value}, actor, proposal_id)
+        self._audit(
+            run["run_id"],
+            run["trace_id"],
+            "tool_call",
+            {
+                "tool": "remediation_executor",
+                "action_id": option.action_id,
+                "scenario": scenario.value,
+                "scenario_kind": scenario_kind.value,
+            },
+            actor,
+            proposal_id,
+        )
         try:
             result = self.executor.execute(option)
             self.store.finalize_execution(
@@ -248,7 +260,17 @@ class IncidentService:
                 result.success,
                 self.clock.now().isoformat(),
                 actor,
-                {"success": result.success, "deleted_count": result.deleted_count, "failure_reason_code": result.failure_reason_code},
+                {
+                    "success": result.success,
+                    "deleted_count": result.deleted_count,
+                    "failure_reason_code": result.failure_reason_code,
+                    "service_restarted": result.service_restarted,
+                    "health_before": result.health_before,
+                    "health_after": result.health_after,
+                    "attempts": result.attempts,
+                    "latency_ms": result.latency_ms,
+                    "boot_count": result.boot_count,
+                },
             )
         except Exception as exc:
             self.store.finalize_execution(

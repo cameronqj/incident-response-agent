@@ -39,6 +39,7 @@ class Settings:
     host: str = "127.0.0.1"
     bearer_token: str | None = field(default=None, repr=False)
     execution_enabled: bool = False
+    lab_mode: str = "synthetic"
     base_url: str = "https://opencode.ai/zen/go/v1"
     model: str = "deepseek-v4-flash"
     api_key_env: str = "OPENCODE_KEY"
@@ -62,6 +63,7 @@ class Settings:
             host=os.getenv("HOST", cls.host),
             bearer_token=os.getenv("INCIDENT_AGENT_BEARER_TOKEN") or None,
             execution_enabled=_strict_bool("EXECUTION_ENABLED", os.getenv("EXECUTION_ENABLED", "0")),
+            lab_mode=os.getenv("LAB_MODE", cls.lab_mode),
             base_url=os.getenv("MODEL_BASE_URL", cls.base_url),
             model=os.getenv("MODEL_NAME", cls.model),
             api_key_env=os.getenv("MODEL_API_KEY_ENV", cls.api_key_env),
@@ -95,3 +97,7 @@ class Settings:
             raise ConfigurationError("MODEL_MAX_RETRIES must be non-negative")
         if self.proposal_ttl_seconds <= 0 or self.expiration_poll_seconds <= 0 or self.execution_timeout_seconds <= 0:
             raise ConfigurationError("timeouts and proposal TTL must be positive")
+        if self.lab_mode not in {"synthetic", "container-service"}:
+            raise ConfigurationError("LAB_MODE must be exactly 'synthetic' or 'container-service'")
+        if self.lab_mode == "container-service" and not self.execution_enabled:
+            raise ConfigurationError("LAB_MODE=container-service requires EXECUTION_ENABLED=1")
