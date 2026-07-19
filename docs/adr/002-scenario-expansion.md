@@ -5,7 +5,7 @@
 
 ## Decision
 
-Add explicit synthetic telemetry adapters for runaway CPU, repeatedly restarting services, memory pressure/OOM, and log storms. Each scenario maps to one deterministic, allowlisted action: `stop_runaway_process`, `restart_disposable_service`, `stop_memory_hog`, or `cleanup_log_storm_temp_files`.
+Add explicit synthetic-marker telemetry adapters for runaway CPU, repeatedly restarting services, memory pressure/OOM, and log storms. Each scenario maps to one deterministic, allowlisted action: `stop_runaway_process`, `restart_disposable_service`, `stop_memory_hog`, or `cleanup_log_storm_temp_files`.
 
 The model may select only those action identifiers. Deterministic code resolves fixed marker locations under the disposable sandbox. Live execution runs the fixed action script in the bounded non-root container; offline tests use the same action contract with an in-memory service and filesystem executor.
 
@@ -15,4 +15,4 @@ These scenarios exercise process-utilization, service-health, memory-pressure, a
 
 ## Consequences
 
-CPU, service, memory-pressure, and log-storm recovery now have deterministic and container integration evidence. The workflow uses a deterministic memory-pressure fixture, while the container failure lab separately verifies a bounded 32 MiB OOM kill under hard resource limits.
+CPU, service, memory-pressure, and log-storm marker removal provides workflow and policy evidence, not real process or service remediation. The failure lab separately verifies genuine bounded ENOSPC and 32 MiB OOM behavior under hard container limits.

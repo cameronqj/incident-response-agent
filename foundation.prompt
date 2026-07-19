@@ -7,7 +7,7 @@ the `cameronqj` public agent portfolio.
 
 Build a bounded incident-response and remediation agent that can receive an
 external event, inspect scoped system evidence, propose remediation options to
-a human, wait for an explicit decision, and safely expire/archive unanswered
+a human, wait for an explicit decision, and safely expire and retain unanswered
 proposals.
 
 The agent must perform a real, useful workflow. Observability and the test
@@ -26,8 +26,8 @@ behavior.
 6. Pause for human acceptance, rejection, or revision.
 7. Execute only an explicitly approved action through an authorized tool
    boundary.
-8. Expire and archive unanswered proposals after a configured TTL without
-   executing remediation.
+8. Expire and retain unanswered proposals after a configured TTL without
+   executing remediation or deleting their history.
 9. Record every state transition, tool call, approval decision, failure, and
    expiration in a sanitized audit trail.
 
@@ -78,12 +78,9 @@ completion endpoint directly:
 Keep the model, base URL, timeout, and API-key environment variable
 configurable. Load secrets only from the process environment or a local,
 gitignored `.env`; never place the key in this prompt, source code, fixtures,
-JSON configuration, traces, or commits. For this local workspace, `.env` has
-been copied from the existing router environment and contains the
-`OPENCODE_KEY` configuration needed for live development. Treat that file as
-local-only secret state: keep it gitignored, do not print its contents, and do
-not include it in commits, archives, screenshots, or public documentation.
-Reuse the router repository's environment-variable pattern where useful.
+JSON configuration, traces, or commits. Treat any local `.env` as local-only
+secret state: keep it gitignored, do not print its contents, and do not include
+it in commits, artifacts, screenshots, or public documentation.
 
 The live adapter is an integration path, not a test dependency. The default
 test suite must use a deterministic fake model and must not require network
@@ -97,8 +94,8 @@ authoritative. The model must never directly execute generated commands.
 ## Safety invariants
 
 - No remediation runs without explicit approval.
-- Approval timeout means `expired` or `archived`, never implicit approval.
-- Expired proposals remain discoverable in audit history.
+- Approval timeout means `expired`, never implicit approval.
+- Expired proposals are retained and remain discoverable in audit history.
 - Diagnostics are read-only by default.
 - Tool permissions are explicit and capability-scoped.
 - Write/execute tools require stronger authorization than read-only tools.

@@ -7,7 +7,7 @@
 
 Implement the first slice in Python 3.12 with FastAPI, Pydantic, and SQLite. The initial scenario is synthetic disk exhaustion caused by failed log rotation. HTTP and CLI interfaces call one application service. Live and offline inference are explicit `APP_MODE` choices.
 
-The model can select only an allowlisted action identifier. Deterministic policy resolves all targets and execution behavior. Approval binds to the immutable proposal revision and canonical action hash. SQLite stores runs, proposal revisions, and sanitized audit records.
+The model can select only an allowlisted action identifier. Deterministic policy resolves all targets and execution behavior. Approval binds to the immutable proposal revision and canonical action hash. SQLite stores runs, retained proposal revisions, and sanitized audit records.
 
 Portable tests use deterministic ENOSPC fault injection. Docker/Podman integration is an additional realistic failure-lab check and is not required for the default offline suite.
 
