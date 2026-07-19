@@ -1,0 +1,47 @@
+from __future__ import annotations
+
+import os
+import shutil
+
+import pytest
+
+from incident_response_agent.executor import ContainerRemediationExecutor
+from incident_response_agent.model import FakeAnalyzer
+from incident_response_agent.schemas import Decision, DecisionRequest, EventRequest
+from incident_response_agent.service import IncidentService
+from incident_response_agent.storage import SQLiteStore
+from incident_response_agent.telemetry import ScenarioTelemetryCollector
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("scenario", "marker_dir", "marker_name"),
+    [("runaway-cpu", "processes", "runaway_cpu.marker"), ("restarting-service", "services", "restart_loop.marker")],
+)
+def test_scenario_runs_through_agent_and_container(tmp_path, scenario, marker_dir, marker_name):
+    if os.getenv("RUN_CONTAINER_TESTS") != "1":
+        pytest.skip("set RUN_CONTAINER_TESTS=1 to run container integration")
+    engine = shutil.which("podman") or shutil.which("docker")
+    if not engine:
+        pytest.fail("RUN_CONTAINER_TESTS=1 requires Docker or Podman")
+    marker_root = tmp_path / marker_dir
+    marker_root.mkdir()
+    marker = marker_root / marker_name
+    marker.write_text("synthetic fault", encoding="utf-8")
+    incident = IncidentService(
+        SQLiteStore(":memory:"),
+        ScenarioTelemetryCollector(),
+        FakeAnalyzer(),
+        ContainerRemediationExecutor(str(tmp_path), engine=engine),
+    )
+
+    run = incident.start_event(EventRequest(idempotency_key=f"container-{scenario}", payload={"scenario": scenario}))
+    assert run.proposal is not None
+    proposal = run.proposal
+    approved = incident.decide(proposal.proposal_id, DecisionRequest(decision=Decision.APPROVE, revision=proposal.revision, action_hash=proposal.action_hash))
+    assert approved.state.value == "approved"
+    completed = incident.execute(proposal.proposal_id)
+    assert completed.state.value == "succeeded"
+    assert not marker.exists()
+    if scenario == "restarting-service":
+        assert (marker_root / "healthy.marker").exists()

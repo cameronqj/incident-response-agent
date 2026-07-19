@@ -13,5 +13,6 @@ Implement the bounded disk-exhaustion workflow described in ADR 001.
 - Approve, reject, revise, and expiration are explicit and auditable.
 - Execution rejects unapproved or hash-mismatched proposals.
 - The only remediation is deterministic cleanup of rotated artifacts in a disposable sandbox.
+- Runaway CPU and restarting-service scenarios use fixed allowlisted actions and bounded recovery fixtures.
 - Offline tests and the deterministic demo pass without network access or an API key.
 - Container integration demonstrates bounded cleanup when a Podman/Docker engine is available.

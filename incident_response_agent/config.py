@@ -31,7 +31,7 @@ class Settings:
     model: str = "deepseek-v4-flash"
     api_key_env: str = "OPENCODE_KEY"
     model_timeout_seconds: float = 30.0
-    model_max_retries: int = 1
+    model_max_retries: int = 2
     proposal_ttl_seconds: int = 900
     expiration_poll_seconds: float = 5.0
     database_path: str = ".data/incident-response.sqlite3"

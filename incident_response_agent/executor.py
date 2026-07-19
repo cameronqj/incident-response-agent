@@ -28,24 +28,43 @@ class DisposableFilesystemExecutor:
         self.sandbox_root = Path(sandbox_root).resolve()
 
     def execute(self, option: RemediationOption) -> ExecutionResult:
-        if option.action_id != "cleanup_rotated_logs":
+        if option.action_id not in {"cleanup_rotated_logs", "stop_runaway_process", "restart_disposable_service"}:
             return ExecutionResult(False, "action is not authorized", failure_reason_code="unauthorized_action")
-        logs_root = (self.sandbox_root / "logs").resolve()
-        if self.sandbox_root not in logs_root.parents:
-            return ExecutionResult(False, "sandbox target escaped root", failure_reason_code="sandbox_escape")
         try:
-            logs_root.mkdir(parents=True, exist_ok=True)
-            deleted = 0
-            for candidate in logs_root.iterdir():
-                if candidate.is_file() and candidate.suffix in {".rotated", ".gz"}:
-                    candidate.unlink()
-                    deleted += 1
-            return ExecutionResult(True, "rotated log cleanup completed", deleted_count=deleted)
+            if option.action_id == "cleanup_rotated_logs":
+                target = (self.sandbox_root / "logs").resolve()
+                if self.sandbox_root not in target.parents:
+                    return ExecutionResult(False, "sandbox target escaped root", failure_reason_code="sandbox_escape")
+                target.mkdir(parents=True, exist_ok=True)
+                deleted = 0
+                for candidate in target.iterdir():
+                    if candidate.is_file() and candidate.suffix in {".rotated", ".gz"}:
+                        candidate.unlink()
+                        deleted += 1
+                return ExecutionResult(True, "rotated log cleanup completed", deleted_count=deleted)
+            if option.action_id == "stop_runaway_process":
+                marker = (self.sandbox_root / "processes" / "runaway_cpu.marker").resolve()
+                if self.sandbox_root not in marker.parents:
+                    return ExecutionResult(False, "sandbox target escaped root", failure_reason_code="sandbox_escape")
+                deleted = int(marker.is_file())
+                if deleted:
+                    marker.unlink()
+                return ExecutionResult(True, "runaway process fixture stopped", deleted_count=deleted)
+            services = (self.sandbox_root / "services").resolve()
+            if self.sandbox_root not in services.parents:
+                return ExecutionResult(False, "sandbox target escaped root", failure_reason_code="sandbox_escape")
+            services.mkdir(parents=True, exist_ok=True)
+            loop_marker = services / "restart_loop.marker"
+            if loop_marker.exists():
+                loop_marker.unlink()
+            (services / "healthy.marker").write_text("healthy", encoding="utf-8")
+            return ExecutionResult(True, "disposable service restarted", deleted_count=1)
         except OSError:
             return ExecutionResult(False, "cleanup failed", failure_reason_code="filesystem_error")
 
 
-CONTAINER_CLEANUP_SCRIPT = """
+CONTAINER_ACTION_SCRIPTS = {
+    "cleanup_rotated_logs": """
 from pathlib import Path
 
 root = Path('/incident-sandbox/logs')
@@ -56,7 +75,29 @@ for candidate in root.iterdir():
         candidate.unlink()
         deleted += 1
 print(f'cleanup_rotated_logs deleted={deleted}')
-"""
+""",
+    "stop_runaway_process": """
+from pathlib import Path
+
+marker = Path('/incident-sandbox/processes/runaway_cpu.marker')
+deleted = int(marker.is_file())
+if marker.is_file():
+    marker.unlink()
+print(f'stop_runaway_process deleted={deleted}')
+""",
+    "restart_disposable_service": """
+from pathlib import Path
+
+root = Path('/incident-sandbox/services')
+root.mkdir(parents=True, exist_ok=True)
+loop_marker = root / 'restart_loop.marker'
+deleted = int(loop_marker.is_file())
+if loop_marker.is_file():
+    loop_marker.unlink()
+(root / 'healthy.marker').write_text('healthy')
+print(f'restart_disposable_service deleted={deleted}')
+""",
+}
 
 
 class ContainerRemediationExecutor:
@@ -69,7 +110,8 @@ class ContainerRemediationExecutor:
         self.timeout_seconds = timeout_seconds
 
     def execute(self, option: RemediationOption) -> ExecutionResult:
-        if option.action_id != "cleanup_rotated_logs":
+        script = CONTAINER_ACTION_SCRIPTS.get(option.action_id)
+        if script is None:
             return ExecutionResult(False, "action is not authorized", failure_reason_code="unauthorized_action")
         if self.sandbox_root == Path("/") or self.sandbox_root.parent == self.sandbox_root:
             return ExecutionResult(False, "sandbox root is not bounded", failure_reason_code="unsafe_sandbox_root")
@@ -96,7 +138,7 @@ class ContainerRemediationExecutor:
                 self.image,
                 "python",
                 "-c",
-                CONTAINER_CLEANUP_SCRIPT,
+                script,
             ]
             result = subprocess.run(command, capture_output=True, text=True, timeout=self.timeout_seconds, check=False)
         except subprocess.TimeoutExpired:

@@ -13,6 +13,18 @@ ALLOWED_ACTIONS: Dict[str, Dict[str, str]] = {
         "impact": "Reclaims disposable-sandbox disk space by deleting known rotated-log artifacts.",
         "risk": "Low: fixed-scope deletion inside the disposable incident sandbox only.",
         "preview": "Delete matching rotated-log artifacts from the configured disposable sandbox.",
+    },
+    "stop_runaway_process": {
+        "title": "Stop the runaway process",
+        "impact": "Stops the known synthetic runaway-process fixture and returns CPU pressure to normal.",
+        "risk": "Low: fixed-scope process fixture inside the disposable incident sandbox only.",
+        "preview": "Stop the fixed runaway-process fixture in the disposable sandbox.",
+    },
+    "restart_disposable_service": {
+        "title": "Restart the disposable service",
+        "impact": "Restarts the fixed synthetic service fixture and clears its restart-loop marker.",
+        "risk": "Low: fixed-scope service fixture inside the disposable incident sandbox only.",
+        "preview": "Restart the fixed service fixture in the disposable sandbox.",
     }
 }
 

@@ -67,7 +67,8 @@ print(f'recovered after {written} bytes')
 
 
 @pytest.mark.integration
-def test_agent_remediation_executes_inside_container(tmp_path):
+@pytest.mark.parametrize("action_id", ["cleanup_rotated_logs", "stop_runaway_process", "restart_disposable_service"])
+def test_agent_remediation_executes_inside_container(tmp_path, action_id):
     if os.getenv("RUN_CONTAINER_TESTS") != "1":
         pytest.skip("set RUN_CONTAINER_TESTS=1 to run container integration")
     engine = shutil.which("podman") or shutil.which("docker")
@@ -76,14 +77,25 @@ def test_agent_remediation_executes_inside_container(tmp_path):
     health = subprocess.run([engine, "info"], capture_output=True, text=True, timeout=20, check=False)
     if health.returncode != 0:
         pytest.fail(f"container engine is installed but unavailable: {health.stderr.strip()}")
-    logs = tmp_path / "logs"
-    logs.mkdir()
-    artifact = logs / "service.1.rotated"
-    artifact.write_text("synthetic artifact", encoding="utf-8")
+    if action_id == "cleanup_rotated_logs":
+        marker_root = tmp_path / "logs"
+        marker = marker_root / "service.1.rotated"
+        marker_root.mkdir()
+        marker.write_text("synthetic artifact", encoding="utf-8")
+    elif action_id == "stop_runaway_process":
+        marker_root = tmp_path / "processes"
+        marker = marker_root / "runaway_cpu.marker"
+        marker_root.mkdir()
+        marker.write_text("synthetic artifact", encoding="utf-8")
+    else:
+        marker_root = tmp_path / "services"
+        marker = marker_root / "restart_loop.marker"
+        marker_root.mkdir()
+        marker.write_text("synthetic artifact", encoding="utf-8")
     result = ContainerRemediationExecutor(str(tmp_path), engine=engine).execute(
         RemediationOption(
-            action_id="cleanup_rotated_logs",
-            title="Clean up rotated logs",
+            action_id=action_id,
+            title=action_id,
             evidence=["low_free_space"],
             confidence=1.0,
             impact="bounded",
@@ -92,5 +104,6 @@ def test_agent_remediation_executes_inside_container(tmp_path):
         )
     )
     assert result.success, result.failure_reason_code
-    assert result.deleted_count == 1
-    assert not artifact.exists()
+    assert not marker.exists()
+    if action_id == "restart_disposable_service":
+        assert (tmp_path / "services" / "healthy.marker").exists()

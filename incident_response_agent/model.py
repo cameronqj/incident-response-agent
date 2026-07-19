@@ -26,16 +26,31 @@ class FakeAnalyzer:
     def analyze(self, evidence: TelemetryEvidence, revision_note: Optional[str] = None) -> ModelResult:
         return ModelResult(
             assessment=ModelAssessment(
-                summary="Failed log rotation is causing rapid log growth and critically low disposable-sandbox disk space.",
+                summary=self._summary(evidence),
                 severity="high",
-                confidence=0.98,
-                evidence_refs=["rotation_error", "low_free_space", "rapid_log_growth"],
-                action_id="cleanup_rotated_logs",
+                confidence=0.98 if evidence.scenario.startswith("failed-log") else 0.97,
+                evidence_refs=evidence.signals,
+                action_id=self._action_id(evidence),
             ),
             latency_ms=0,
             token_count=0,
             retry_count=0,
         )
+
+    @staticmethod
+    def _action_id(evidence: TelemetryEvidence) -> str:
+        return {
+            "runaway-cpu": "stop_runaway_process",
+            "restarting-service": "restart_disposable_service",
+        }.get(evidence.scenario, "cleanup_rotated_logs")
+
+    @staticmethod
+    def _summary(evidence: TelemetryEvidence) -> str:
+        if evidence.scenario == "runaway-cpu":
+            return "A sustained high-CPU runaway process is consuming disposable-container capacity."
+        if evidence.scenario == "restarting-service":
+            return "A disposable service is unhealthy and repeatedly restarting with crash backoff."
+        return "Failed log rotation is causing rapid log growth and critically low disposable-sandbox disk space."
 
 
 class LiveOpenAICompatibleAnalyzer:
@@ -50,7 +65,7 @@ class LiveOpenAICompatibleAnalyzer:
         system = (
             "You are an incident assessment analyst. Return exactly one JSON object with exactly these keys: "
             "summary (string), severity (one of low, medium, high, critical), confidence (number from 0 to 1), "
-            "evidence_refs (array of strings), and action_id (exactly cleanup_rotated_logs). "
+            "evidence_refs (array of strings), and action_id (one of cleanup_rotated_logs, stop_runaway_process, restart_disposable_service). "
             "Example: {\"summary\":\"disk pressure is caused by failed rotation\",\"severity\":\"high\","
             "\"confidence\":0.95,\"evidence_refs\":[\"rotation_error\",\"low_free_space\"],"
             "\"action_id\":\"cleanup_rotated_logs\"}. Never return shell commands, executable paths, "
@@ -93,6 +108,8 @@ class LiveOpenAICompatibleAnalyzer:
                 if isinstance(content, list):
                     content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
                 content = str(content).strip()
+                if not content:
+                    raise ValueError("empty_model_response")
                 if content.startswith("```"):
                     content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
                 assessment = ModelAssessment.model_validate_json(content)

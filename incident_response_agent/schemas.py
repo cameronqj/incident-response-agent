@@ -54,6 +54,10 @@ class TelemetryEvidence(BaseModel):
     free_bytes: int = Field(ge=0)
     log_growth_bytes_per_minute: int = Field(ge=0)
     affected_file_count: int = Field(ge=0)
+    cpu_percent: float = Field(default=0, ge=0, le=100)
+    runaway_process_detected: bool = False
+    service_state: Optional[str] = None
+    restart_count: int = Field(default=0, ge=0)
     signals: List[str] = Field(default_factory=list)
     fault_injection: Optional[str] = None
 
