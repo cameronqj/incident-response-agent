@@ -10,6 +10,8 @@ from incident_response_agent.schemas import Decision, DecisionRequest, EventRequ
     [
         ("runaway-cpu", "processes", "runaway_cpu.marker", "stop_runaway_process"),
         ("restarting-service", "services", "restart_loop.marker", "restart_disposable_service"),
+        ("memory-oom", "memory", "memory_hog.marker", "stop_memory_hog"),
+        ("log-storm", "logs/storm", "service.1.storm", "cleanup_log_storm_temp_files"),
     ],
 )
 def test_scenario_proposes_and_recovers_with_allowlisted_action(service, scenario, marker_dir, marker_name, expected_action):
@@ -18,6 +20,10 @@ def test_scenario_proposes_and_recovers_with_allowlisted_action(service, scenari
     marker_root.mkdir(parents=True)
     marker = marker_root / marker_name
     marker.write_text("synthetic fault", encoding="utf-8")
+    if scenario == "log-storm":
+        temp_root = sandbox / "tmp"
+        temp_root.mkdir()
+        (temp_root / "cache.tmp").write_text("synthetic artifact", encoding="utf-8")
 
     run = incident.start_event(EventRequest(idempotency_key=f"scenario-{scenario}", payload={"scenario": scenario}))
     assert run.proposal is not None

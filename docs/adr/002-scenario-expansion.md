@@ -5,14 +5,14 @@
 
 ## Decision
 
-Add explicit synthetic telemetry adapters for runaway CPU and repeatedly restarting services. Each scenario maps to one deterministic, allowlisted action: `stop_runaway_process` or `restart_disposable_service`.
+Add explicit synthetic telemetry adapters for runaway CPU, repeatedly restarting services, memory pressure/OOM, and log storms. Each scenario maps to one deterministic, allowlisted action: `stop_runaway_process`, `restart_disposable_service`, `stop_memory_hog`, or `cleanup_log_storm_temp_files`.
 
 The model may select only those action identifiers. Deterministic code resolves fixed marker locations under the disposable sandbox. Live execution runs the fixed action script in the bounded non-root container; offline tests use the same action contract with an in-memory service and filesystem executor.
 
 ## Rationale
 
-These scenarios exercise process-utilization and service-health evidence without inspecting the host or terminating real processes. They expand the useful incident domain while preserving the approval, action-hash, timeout, and audit boundaries established by the first slice.
+These scenarios exercise process-utilization, service-health, memory-pressure, and artifact-growth evidence without inspecting the host or terminating real processes. They expand the useful incident domain while preserving the approval, action-hash, timeout, and audit boundaries established by the first slice.
 
 ## Consequences
 
-CPU and service recovery now have deterministic and container integration evidence. Memory/OOM and log-storm/temp-file scenarios remain separate because they require additional resource-limit and cross-platform fixture design.
+CPU, service, memory-pressure, and log-storm recovery now have deterministic and container integration evidence. The memory scenario uses a deterministic fixture rather than relying on platform-specific OOM-kill behavior; realistic resource-limit tests remain a future enhancement.

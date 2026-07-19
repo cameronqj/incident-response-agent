@@ -67,7 +67,7 @@ print(f'recovered after {written} bytes')
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("action_id", ["cleanup_rotated_logs", "stop_runaway_process", "restart_disposable_service"])
+@pytest.mark.parametrize("action_id", ["cleanup_rotated_logs", "stop_runaway_process", "restart_disposable_service", "stop_memory_hog", "cleanup_log_storm_temp_files"])
 def test_agent_remediation_executes_inside_container(tmp_path, action_id):
     if os.getenv("RUN_CONTAINER_TESTS") != "1":
         pytest.skip("set RUN_CONTAINER_TESTS=1 to run container integration")
@@ -87,6 +87,19 @@ def test_agent_remediation_executes_inside_container(tmp_path, action_id):
         marker = marker_root / "runaway_cpu.marker"
         marker_root.mkdir()
         marker.write_text("synthetic artifact", encoding="utf-8")
+    elif action_id == "stop_memory_hog":
+        marker_root = tmp_path / "memory"
+        marker = marker_root / "memory_hog.marker"
+        marker_root.mkdir()
+        marker.write_text("synthetic artifact", encoding="utf-8")
+    elif action_id == "cleanup_log_storm_temp_files":
+        marker_root = tmp_path / "logs" / "storm"
+        marker = marker_root / "service.1.storm"
+        marker_root.mkdir(parents=True)
+        marker.write_text("synthetic artifact", encoding="utf-8")
+        temp_root = tmp_path / "tmp"
+        temp_root.mkdir()
+        (temp_root / "cache.tmp").write_text("synthetic artifact", encoding="utf-8")
     else:
         marker_root = tmp_path / "services"
         marker = marker_root / "restart_loop.marker"
@@ -105,5 +118,7 @@ def test_agent_remediation_executes_inside_container(tmp_path, action_id):
     )
     assert result.success, result.failure_reason_code
     assert not marker.exists()
+    if action_id == "cleanup_log_storm_temp_files":
+        assert not (tmp_path / "tmp" / "cache.tmp").exists()
     if action_id == "restart_disposable_service":
         assert (tmp_path / "services" / "healthy.marker").exists()

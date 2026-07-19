@@ -25,7 +25,19 @@ ALLOWED_ACTIONS: Dict[str, Dict[str, str]] = {
         "impact": "Restarts the fixed synthetic service fixture and clears its restart-loop marker.",
         "risk": "Low: fixed-scope service fixture inside the disposable incident sandbox only.",
         "preview": "Restart the fixed service fixture in the disposable sandbox.",
-    }
+    },
+    "stop_memory_hog": {
+        "title": "Stop the memory-hog fixture",
+        "impact": "Stops the fixed synthetic memory-hog fixture and releases disposable-container memory pressure.",
+        "risk": "Low: fixed-scope memory fixture inside the disposable incident sandbox only.",
+        "preview": "Stop the fixed memory-hog fixture in the disposable sandbox.",
+    },
+    "cleanup_log_storm_temp_files": {
+        "title": "Clean up log-storm temporary files",
+        "impact": "Reclaims disposable-sandbox space from fixed log-storm and temporary-file artifacts.",
+        "risk": "Low: fixed-scope storm artifacts inside the disposable incident sandbox only.",
+        "preview": "Delete fixed log-storm and temporary-file artifacts from the disposable sandbox.",
+    },
 }
 
 

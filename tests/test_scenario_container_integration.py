@@ -16,7 +16,12 @@ from incident_response_agent.telemetry import ScenarioTelemetryCollector
 @pytest.mark.integration
 @pytest.mark.parametrize(
     ("scenario", "marker_dir", "marker_name"),
-    [("runaway-cpu", "processes", "runaway_cpu.marker"), ("restarting-service", "services", "restart_loop.marker")],
+    [
+        ("runaway-cpu", "processes", "runaway_cpu.marker"),
+        ("restarting-service", "services", "restart_loop.marker"),
+        ("memory-oom", "memory", "memory_hog.marker"),
+        ("log-storm", "logs/storm", "service.1.storm"),
+    ],
 )
 def test_scenario_runs_through_agent_and_container(tmp_path, scenario, marker_dir, marker_name):
     if os.getenv("RUN_CONTAINER_TESTS") != "1":
@@ -25,9 +30,13 @@ def test_scenario_runs_through_agent_and_container(tmp_path, scenario, marker_di
     if not engine:
         pytest.fail("RUN_CONTAINER_TESTS=1 requires Docker or Podman")
     marker_root = tmp_path / marker_dir
-    marker_root.mkdir()
+    marker_root.mkdir(parents=True)
     marker = marker_root / marker_name
     marker.write_text("synthetic fault", encoding="utf-8")
+    if scenario == "log-storm":
+        temp_root = tmp_path / "tmp"
+        temp_root.mkdir()
+        (temp_root / "cache.tmp").write_text("synthetic artifact", encoding="utf-8")
     incident = IncidentService(
         SQLiteStore(":memory:"),
         ScenarioTelemetryCollector(),
@@ -43,5 +52,7 @@ def test_scenario_runs_through_agent_and_container(tmp_path, scenario, marker_di
     completed = incident.execute(proposal.proposal_id)
     assert completed.state.value == "succeeded"
     assert not marker.exists()
+    if scenario == "log-storm":
+        assert not (tmp_path / "tmp" / "cache.tmp").exists()
     if scenario == "restarting-service":
         assert (marker_root / "healthy.marker").exists()

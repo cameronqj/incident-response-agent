@@ -93,7 +93,7 @@ class IncidentService:
         try:
             self._state(run_id, trace_id, RunState.INVESTIGATING, "event accepted")
             evidence = self.telemetry.collect(event)
-            self._audit(run_id, trace_id, "telemetry_collected", {"scenario": evidence.scenario, "free_bytes": evidence.free_bytes, "affected_file_count": evidence.affected_file_count, "cpu_percent": evidence.cpu_percent, "runaway_process_detected": evidence.runaway_process_detected, "service_state": evidence.service_state, "restart_count": evidence.restart_count, "fault_injection": evidence.fault_injection})
+            self._audit(run_id, trace_id, "telemetry_collected", {"scenario": evidence.scenario, "free_bytes": evidence.free_bytes, "affected_file_count": evidence.affected_file_count, "cpu_percent": evidence.cpu_percent, "memory_percent": evidence.memory_percent, "oom_kill_detected": evidence.oom_kill_detected, "log_storm_detected": evidence.log_storm_detected, "temp_file_count": evidence.temp_file_count, "runaway_process_detected": evidence.runaway_process_detected, "service_state": evidence.service_state, "restart_count": evidence.restart_count, "fault_injection": evidence.fault_injection})
             result = self.analyzer.analyze(evidence)
             self._audit(run_id, trace_id, "model_completed", {"latency_ms": result.latency_ms, "token_count": result.token_count, "retry_count": result.retry_count})
             self._state(run_id, trace_id, RunState.ASSESSED, "structured assessment validated")

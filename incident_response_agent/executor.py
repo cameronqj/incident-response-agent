@@ -28,7 +28,13 @@ class DisposableFilesystemExecutor:
         self.sandbox_root = Path(sandbox_root).resolve()
 
     def execute(self, option: RemediationOption) -> ExecutionResult:
-        if option.action_id not in {"cleanup_rotated_logs", "stop_runaway_process", "restart_disposable_service"}:
+        if option.action_id not in {
+            "cleanup_rotated_logs",
+            "stop_runaway_process",
+            "restart_disposable_service",
+            "stop_memory_hog",
+            "cleanup_log_storm_temp_files",
+        }:
             return ExecutionResult(False, "action is not authorized", failure_reason_code="unauthorized_action")
         try:
             if option.action_id == "cleanup_rotated_logs":
@@ -50,6 +56,27 @@ class DisposableFilesystemExecutor:
                 if deleted:
                     marker.unlink()
                 return ExecutionResult(True, "runaway process fixture stopped", deleted_count=deleted)
+            if option.action_id == "stop_memory_hog":
+                marker = (self.sandbox_root / "memory" / "memory_hog.marker").resolve()
+                if self.sandbox_root not in marker.parents:
+                    return ExecutionResult(False, "sandbox target escaped root", failure_reason_code="sandbox_escape")
+                deleted = int(marker.is_file())
+                if deleted:
+                    marker.unlink()
+                return ExecutionResult(True, "memory-hog fixture stopped", deleted_count=deleted)
+            if option.action_id == "cleanup_log_storm_temp_files":
+                deleted = 0
+                for relative_root, suffixes in (("logs/storm", {".storm"}), ("tmp", {".tmp"})):
+                    target = (self.sandbox_root / relative_root).resolve()
+                    if self.sandbox_root not in target.parents:
+                        return ExecutionResult(False, "sandbox target escaped root", failure_reason_code="sandbox_escape")
+                    if not target.is_dir():
+                        continue
+                    for candidate in target.iterdir():
+                        if candidate.is_file() and candidate.suffix in suffixes:
+                            candidate.unlink()
+                            deleted += 1
+                return ExecutionResult(True, "log-storm temporary-file cleanup completed", deleted_count=deleted)
             services = (self.sandbox_root / "services").resolve()
             if self.sandbox_root not in services.parents:
                 return ExecutionResult(False, "sandbox target escaped root", failure_reason_code="sandbox_escape")
@@ -96,6 +123,32 @@ if loop_marker.is_file():
     loop_marker.unlink()
 (root / 'healthy.marker').write_text('healthy')
 print(f'restart_disposable_service deleted={deleted}')
+""",
+    "stop_memory_hog": """
+from pathlib import Path
+
+marker = Path('/incident-sandbox/memory/memory_hog.marker')
+deleted = int(marker.is_file())
+if marker.is_file():
+    marker.unlink()
+print(f'stop_memory_hog deleted={deleted}')
+""",
+    "cleanup_log_storm_temp_files": """
+from pathlib import Path
+
+deleted = 0
+for relative_root, suffixes in (
+    ('logs/storm', {'.storm'}),
+    ('tmp', {'.tmp'}),
+):
+    root = Path('/incident-sandbox') / relative_root
+    if not root.is_dir():
+        continue
+    for candidate in root.iterdir():
+        if candidate.is_file() and candidate.suffix in suffixes:
+            candidate.unlink()
+            deleted += 1
+print(f'cleanup_log_storm_temp_files deleted={deleted}')
 """,
 }
 

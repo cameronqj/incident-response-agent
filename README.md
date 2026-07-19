@@ -4,7 +4,7 @@
 
 ## What it does
 
-- Demonstrates failed log rotation leading to disk exhaustion, runaway CPU, and a repeatedly restarting service.
+- Demonstrates failed log rotation leading to disk exhaustion, runaway CPU, a repeatedly restarting service, memory pressure/OOM, and a log storm.
 - Enforces idempotent event intake and immutable proposal/action-hash approval.
 - Supports explicit approve, reject, revise, expire, and execute transitions.
 - Records sanitized state, model, approval, execution, retry, and failure observations.
@@ -12,7 +12,7 @@
 
 ## What it does not do
 
-This is not production-safe autonomous remediation. It does not inspect the host, execute arbitrary model-generated commands, use privileged containers, route among models, or provide a production incident-management platform. Memory/OOM and log-storm/temp-file scenarios remain future work.
+This is not production-safe autonomous remediation. It does not inspect the host, execute arbitrary model-generated commands, use privileged containers, route among models, or provide a production incident-management platform.
 
 ## Quickstart
 
@@ -66,4 +66,4 @@ Live inference defaults are `https://opencode.ai/zen/go/v1`, model `deepseek-v4-
 
 ## Evidence level
 
-The offline suite is evidence for workflow, schema, idempotency, approval gating, expiration, action binding, audit redaction, and deterministic CPU/service/ENOSPC fixtures. Container integration is separately labeled and requires a working Podman or Docker engine. No claim of production safety or model reliability is made.
+The offline suite is evidence for workflow, schema, idempotency, approval gating, expiration, action binding, audit redaction, and deterministic CPU/service/memory/log-storm/ENOSPC fixtures. Container integration is separately labeled and requires a working Podman or Docker engine. No claim of production safety or model reliability is made.

@@ -42,6 +42,8 @@ class FakeAnalyzer:
         return {
             "runaway-cpu": "stop_runaway_process",
             "restarting-service": "restart_disposable_service",
+            "memory-oom": "stop_memory_hog",
+            "log-storm": "cleanup_log_storm_temp_files",
         }.get(evidence.scenario, "cleanup_rotated_logs")
 
     @staticmethod
@@ -50,6 +52,10 @@ class FakeAnalyzer:
             return "A sustained high-CPU runaway process is consuming disposable-container capacity."
         if evidence.scenario == "restarting-service":
             return "A disposable service is unhealthy and repeatedly restarting with crash backoff."
+        if evidence.scenario == "memory-oom":
+            return "A memory-hog fixture is driving critical memory pressure and has triggered an OOM condition."
+        if evidence.scenario == "log-storm":
+            return "A log storm is rapidly creating log and temporary-file artifacts in the disposable sandbox."
         return "Failed log rotation is causing rapid log growth and critically low disposable-sandbox disk space."
 
 
@@ -65,7 +71,7 @@ class LiveOpenAICompatibleAnalyzer:
         system = (
             "You are an incident assessment analyst. Return exactly one JSON object with exactly these keys: "
             "summary (string), severity (one of low, medium, high, critical), confidence (number from 0 to 1), "
-            "evidence_refs (array of strings), and action_id (one of cleanup_rotated_logs, stop_runaway_process, restart_disposable_service). "
+            "evidence_refs (array of strings), and action_id (one of cleanup_rotated_logs, stop_runaway_process, restart_disposable_service, stop_memory_hog, cleanup_log_storm_temp_files). "
             "Example: {\"summary\":\"disk pressure is caused by failed rotation\",\"severity\":\"high\","
             "\"confidence\":0.95,\"evidence_refs\":[\"rotation_error\",\"low_free_space\"],"
             "\"action_id\":\"cleanup_rotated_logs\"}. Never return shell commands, executable paths, "

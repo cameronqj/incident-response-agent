@@ -58,6 +58,40 @@ class SyntheticRestartingServiceTelemetry:
         )
 
 
+class SyntheticMemoryOOMTelemetry:
+    """Synthetic memory-pressure evidence; it never inspects the host."""
+
+    def collect(self, event: EventRequest) -> TelemetryEvidence:
+        return TelemetryEvidence(
+            scenario="memory-oom",
+            rotation_failed=False,
+            free_bytes=1_048_576,
+            log_growth_bytes_per_minute=0,
+            affected_file_count=0,
+            memory_percent=99.2,
+            oom_kill_detected=True,
+            signals=["memory_pressure", "oom_kill", "allocation_failures"],
+            fault_injection="OOM_PRESSURE",
+        )
+
+
+class SyntheticLogStormTelemetry:
+    """Synthetic log-storm and temporary-file evidence; it never inspects the host."""
+
+    def collect(self, event: EventRequest) -> TelemetryEvidence:
+        return TelemetryEvidence(
+            scenario="log-storm",
+            rotation_failed=False,
+            free_bytes=65_536,
+            log_growth_bytes_per_minute=67_108_864,
+            affected_file_count=128,
+            log_storm_detected=True,
+            temp_file_count=24,
+            signals=["rapid_log_growth", "temp_file_growth", "rotation_backlog"],
+            fault_injection="LOG_STORM",
+        )
+
+
 class ScenarioTelemetryCollector:
     """Route synthetic events to explicit, bounded scenario adapters."""
 
@@ -68,6 +102,9 @@ class ScenarioTelemetryCollector:
             "disk": SyntheticDiskExhaustionTelemetry(),
             "runaway-cpu": SyntheticRunawayCPUTelemetry(),
             "restarting-service": SyntheticRestartingServiceTelemetry(),
+            "memory-oom": SyntheticMemoryOOMTelemetry(),
+            "oom": SyntheticMemoryOOMTelemetry(),
+            "log-storm": SyntheticLogStormTelemetry(),
         }
 
     def collect(self, event: EventRequest) -> TelemetryEvidence:
