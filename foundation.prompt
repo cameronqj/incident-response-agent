@@ -1,0 +1,167 @@
+# Foundation Prompt: incident-response-agent
+
+You are building `incident-response-agent`, a focused experimental project in
+the `cameronqj` public agent portfolio.
+
+## Mission
+
+Build a bounded incident-response and remediation agent that can receive an
+external event, inspect scoped system evidence, propose remediation options to
+a human, wait for an explicit decision, and safely expire/archive unanswered
+proposals.
+
+The agent must perform a real, useful workflow. Observability and the test
+harness are first-class parts of the system, not substitutes for functional
+behavior.
+
+## Core workflow
+
+1. Receive a simulated or real webhook/event.
+2. Deduplicate the event using an idempotency key.
+3. Collect scoped logs, process state, filesystem state, and host-utilization
+   metrics through explicit adapters.
+4. Analyze the evidence and produce a structured incident assessment.
+5. Present one or more remediation options with evidence, confidence, impact,
+   risk, and an action preview.
+6. Pause for human acceptance, rejection, or revision.
+7. Execute only an explicitly approved action through an authorized tool
+   boundary.
+8. Expire and archive unanswered proposals after a configured TTL without
+   executing remediation.
+9. Record every state transition, tool call, approval decision, failure, and
+   expiration in a sanitized audit trail.
+
+## Initial scope
+
+Start with a small operational incident domain and a reproducible container
+test harness. Initial scenarios should include:
+
+- failed log rotation leading to disk exhaustion;
+- runaway CPU process;
+- memory pressure and container OOM;
+- crashed or repeatedly restarting service; and
+- log storm or rapidly growing temporary files.
+
+Use synthetic telemetry as the default test and demo source. Do not collect,
+commit, or publish real host logs, process lists, usernames, paths, IP
+addresses, hardware identifiers, or other local-system details.
+
+The first implementation should support read-only diagnostics and remediation
+proposals. Remediation execution may be limited to a safe disposable
+container and must be explicit, authorized, idempotent, bounded by a timeout,
+and auditable.
+
+## Boundaries
+
+This project owns incident intake, evidence collection, assessment,
+remediation proposals, approval state, safe execution, and operational
+observability.
+
+It does not own universal model routing, arbitrary code execution, a general
+agent framework, long-running autonomous remediation, or a production-grade
+incident-management SaaS platform.
+
+`local-first-model-router` is not a required dependency. Model access and tool
+execution must be injected behind small interfaces. An optional integration
+example may use the router, but the core project and offline test suite must
+run without it.
+
+## Inference configuration
+
+The first live-analysis adapter should use an OpenAI-compatible chat
+completion endpoint directly:
+
+- base URL: `https://opencode.ai/zen/go/v1`;
+- model: `deepseek-v4-flash`;
+- API key environment variable: `OPENCODE_KEY`.
+
+Keep the model, base URL, timeout, and API-key environment variable
+configurable. Load secrets only from the process environment or a local,
+gitignored `.env`; never place the key in this prompt, source code, fixtures,
+JSON configuration, traces, or commits. For this local workspace, `.env` has
+been copied from the existing router environment and contains the
+`OPENCODE_KEY` configuration needed for live development. Treat that file as
+local-only secret state: keep it gitignored, do not print its contents, and do
+not include it in commits, archives, screenshots, or public documentation.
+Reuse the router repository's environment-variable pattern where useful.
+
+The live adapter is an integration path, not a test dependency. The default
+test suite must use a deterministic fake model and must not require network
+access, an API key, or the local-first router. A documented live demo may fail
+clearly when `OPENCODE_KEY` is absent.
+
+The model proposes assessments and remediation options; deterministic policy,
+schemas, permissions, approval state, and execution guards remain
+authoritative. The model must never directly execute generated commands.
+
+## Safety invariants
+
+- No remediation runs without explicit approval.
+- Approval timeout means `expired` or `archived`, never implicit approval.
+- Expired proposals remain discoverable in audit history.
+- Diagnostics are read-only by default.
+- Tool permissions are explicit and capability-scoped.
+- Write/execute tools require stronger authorization than read-only tools.
+- Webhook delivery is idempotent.
+- Retries are bounded and distinguish transient failure from unsafe failure.
+- Raw prompts, secrets, full log bodies, and sensitive tool arguments are not
+  written to default logs.
+- Container tests cannot access the host filesystem or require privileged mode.
+
+## Required architecture direction
+
+Prefer injected interfaces for:
+
+- model analysis;
+- telemetry collection;
+- event storage;
+- approval/presentation channel;
+- clock/time advancement; and
+- remediation execution.
+
+Use structured schemas for events, telemetry, assessments, remediation
+options, approval decisions, execution results, and audit records.
+
+Build the container harness as a failure lab with hard resource limits,
+isolated temporary filesystems, non-root execution, network isolation where
+possible, automatic cleanup, and test timeouts. Keep deterministic fault
+injection tests alongside realistic container integration tests so CI does not
+depend on timing-sensitive host behavior.
+
+## Public repository standards
+
+Before implementation:
+
+1. Inspect the repository state and preserve user changes.
+2. Establish a concise project constitution under `docs/constitution.md`.
+3. Create an initial scope ADR under `docs/adr/`.
+4. Track the initial build in GitHub Issue #1 on the first commit/push.
+5. Do not create a `tasks/` directory.
+
+Follow the existing `cameronqj` public-repository style: concise README,
+explicit “what it does” and “what it does not do” sections, evidence-level
+language, offline tests, reproducible demo commands, ADRs for meaningful
+boundary changes, and MIT licensing unless the user directs otherwise.
+
+Do not claim production safety, autonomous remediation, model reliability, or
+provider compatibility without corresponding tests or clearly labeled
+integration evidence.
+
+## Definition of done for the first vertical slice
+
+- A webhook or equivalent simulated event can start a run.
+- At least one synthetic scenario produces realistic evidence.
+- The agent produces a validated remediation proposal.
+- A human can approve, reject, or allow the proposal to expire.
+- Approval is required before any side effect.
+- Duplicate events do not duplicate work.
+- The container harness demonstrates at least one bounded failure and
+  recovery/remediation path.
+- Audit records are sanitized and inspectable.
+- Offline tests and a deterministic demo pass without external model access.
+- README claims are tied to tests, fixtures, ADRs, or explicitly labeled
+  experiments.
+
+Begin by creating the repository constitution, initial scope ADR, GitHub Issue
+#1 description, and the smallest vertical-slice design before expanding the
+framework or adding additional incident scenarios.
