@@ -18,6 +18,15 @@ from .storage import SQLiteStore
 from .telemetry import DeterministicENOSPCTelemetry
 
 
+def initialize_database(database_path: str) -> dict[str, str | int]:
+    store = SQLiteStore(database_path)
+    try:
+        schema_version = int(store.connection.execute("PRAGMA user_version").fetchone()[0])
+    finally:
+        store.close()
+    return {"database_path": database_path, "schema_version": schema_version, "status": "ready"}
+
+
 def demo() -> None:
     sandbox = DisposableSandbox.create_runtime()
     try:
@@ -94,6 +103,8 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("demo", help="run the offline disk-exhaustion demo")
     subparsers.add_parser("container-service-demo", help="detect and restart one owned disposable service")
+    init_parser = subparsers.add_parser("init-db", help="create or migrate the SQLite database")
+    init_parser.add_argument("--database-path", default=None)
     serve_parser = subparsers.add_parser("serve", help="run the FastAPI service")
     serve_parser.add_argument("--host", default=None)
     serve_parser.add_argument("--port", type=int, default=8000)
@@ -103,6 +114,10 @@ def main() -> None:
         return
     if args.command == "container-service-demo":
         container_service_demo()
+        return
+    if args.command == "init-db":
+        database_path = args.database_path or Settings.from_env().database_path
+        print(json.dumps(initialize_database(database_path), sort_keys=True))
         return
     import uvicorn
 
