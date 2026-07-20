@@ -142,6 +142,12 @@ class DisposableContainerService:
             "--pids-limit=64",
             "--cap-drop=ALL",
             "--security-opt=no-new-privileges",
+        ]
+        if not self._is_podman:
+            # Match the process-owned sandbox UID when Docker daemon user
+            # remapping is enabled; the container process remains non-root.
+            command.append("--userns=host")
+        command.extend([
             "--user",
             f"{uid}:{gid}",
             "--mount",
@@ -157,7 +163,7 @@ class DisposableContainerService:
             "python",
             "-c",
             SERVICE_SCRIPT,
-        ]
+        ])
         result = self._run(command)
         if result.returncode != 0:
             self.close()

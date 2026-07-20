@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import uuid
+from pathlib import Path
 from typing import Protocol
 
 from .container_lab import ContainerLabError, DisposableContainerService
@@ -258,6 +259,12 @@ class ContainerRemediationExecutor:
                 "--pids-limit=64",
                 "--cap-drop=ALL",
                 "--security-opt=no-new-privileges",
+            ]
+            if Path(self.engine).name == "docker":
+                # Docker daemons may remap UIDs. Preserve the host UID mapping so
+                # this non-root process can access only its process-owned sandbox.
+                command.append("--userns=host")
+            command.extend([
                 "--user",
                 f"{uid}:{gid}",
                 "--mount",
@@ -268,7 +275,7 @@ class ContainerRemediationExecutor:
                 "python",
                 "-c",
                 script,
-            ]
+            ])
             result = subprocess.run(command, capture_output=True, text=True, timeout=self.timeout_seconds, check=False)
         except subprocess.TimeoutExpired:
             return ExecutionResult(False, "container cleanup timed out", failure_reason_code="execution_timeout")

@@ -57,6 +57,20 @@ def test_container_command_enforces_limits_and_exact_mount(tmp_path, monkeypatch
     assert calls[-1] == ["podman", "rm", "-f", container_name]
 
 
+def test_docker_preserves_host_uid_mapping_for_owned_sandbox(tmp_path, monkeypatch):
+    sandbox = DisposableSandbox.create_test_fixture(tmp_path / "sandbox")
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="cleanup_rotated_logs deleted=0", stderr="")
+
+    monkeypatch.setattr("incident_response_agent.executor.subprocess.run", fake_run)
+    result = ContainerRemediationExecutor(sandbox, TEST_IMAGE, engine="/usr/bin/docker").execute(_option())
+    assert result.success is True
+    assert "--userns=host" in calls[0]
+
+
 def test_timeout_forcibly_cleans_exact_container(tmp_path, monkeypatch):
     sandbox = DisposableSandbox.create_test_fixture(tmp_path / "sandbox")
     calls: list[list[str]] = []
