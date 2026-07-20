@@ -10,6 +10,7 @@ from .audit import safe_metadata, sanitize_text
 from .clock import Clock, SystemClock
 from .executor import RemediationExecutor
 from .model import Analyzer
+from .observability import NoopObservability, OpenTelemetryObservability
 from .policy import SafetyViolation, action_hash, build_option, validate_scenario_action
 from .schemas import Decision, DecisionRequest, EventRequest, ModelAssessment, ProposalState, RemediationOption, RunState, RunView, Scenario, ScenarioKind
 from .security import sanitize_event
@@ -58,6 +59,7 @@ class IncidentService:
         clock: Optional[Clock] = None,
         expiration_poll_seconds: float = 5.0,
         execution_enabled: bool = True,
+        observability: NoopObservability | OpenTelemetryObservability | None = None,
     ):
         self.store = store
         self.telemetry = telemetry
@@ -67,6 +69,7 @@ class IncidentService:
         self.clock = clock or SystemClock()
         self.expiration_poll_seconds = expiration_poll_seconds
         self.execution_enabled = execution_enabled
+        self.observability = observability or NoopObservability()
 
     def _audit(self, run_id: str, trace_id: str, event_type: str, metadata: dict, actor: str, proposal_id: Optional[str] = None) -> None:
         details = dict(metadata)
@@ -80,11 +83,22 @@ class IncidentService:
         return InvalidTransitionError(str(exc))
 
     def start_event(self, event: EventRequest, actor: str = "local-service") -> RunView:
+        with self.observability.span(
+            "incident.start_event",
+            {
+                "incident.scenario": event.payload.scenario.value,
+                "incident.event_source": event.source.value,
+            },
+        ) as lifecycle_span:
+            return self._start_event(event, actor, lifecycle_span)
+
+    def _start_event(self, event: EventRequest, actor: str, lifecycle_span) -> RunView:
         normalized = sanitize_event(event)
         payload_hash = hashlib.sha256(_canonical_event(normalized).encode("utf-8")).hexdigest()
         now = self.clock.now()
         run_id = str(uuid.uuid4())
         trace_id = normalized.trace_id or str(uuid.uuid4())
+        lifecycle_span.set_attribute("incident.run_id", run_id)
         row = {
             "run_id": run_id,
             "idempotency_key": normalized.idempotency_key,
@@ -111,7 +125,10 @@ class IncidentService:
 
         try:
             self.store.transition_run(run_id, RunState.RECEIVED.value, RunState.INVESTIGATING.value, self.clock.now().isoformat(), trace_id, "event accepted", actor)
-            evidence = self.telemetry.collect(normalized)
+            with self.observability.span("incident.telemetry.collect") as telemetry_span:
+                evidence = self.telemetry.collect(normalized)
+                telemetry_span.set_attribute("incident.scenario", evidence.scenario.value)
+                telemetry_span.set_attribute("incident.scenario_kind", evidence.scenario_kind.value)
             self._audit(
                 run_id,
                 trace_id,
@@ -133,7 +150,20 @@ class IncidentService:
                 },
                 actor,
             )
-            result = self.analyzer.analyze(evidence)
+            with self.observability.span(
+                "incident.model.analyze",
+                {
+                    "incident.scenario": evidence.scenario.value,
+                    "incident.scenario_kind": evidence.scenario_kind.value,
+                },
+            ):
+                result = self.analyzer.analyze(evidence)
+            self.observability.record_model(
+                result.latency_ms,
+                result.token_count,
+                result.retry_count,
+                evidence.scenario.value,
+            )
             self._audit(run_id, trace_id, "model_completed", {"latency_ms": result.latency_ms, "token_count": result.token_count, "retry_count": result.retry_count}, actor)
             self.store.transition_run(run_id, RunState.INVESTIGATING.value, RunState.ASSESSED.value, self.clock.now().isoformat(), trace_id, "structured assessment validated", actor)
             option = build_option(evidence.scenario, evidence.scenario_kind, result.assessment)
@@ -155,7 +185,26 @@ class IncidentService:
                 "created_at": created_at.isoformat(),
             }
             event_to_proposal_ms = int((created_at - now).total_seconds() * 1000)
-            self.store.create_proposal_and_transition(proposal, created_at.isoformat(), trace_id, actor, event_to_proposal_ms)
+            lifecycle_span.set_attribute("incident.proposal_id", proposal_id)
+            lifecycle_span.set_attribute("incident.action_id", option.action_id)
+            lifecycle_span.set_attribute("incident.scenario_kind", evidence.scenario_kind.value)
+            with self.observability.span(
+                "incident.proposal.create",
+                {
+                    "incident.run_id": run_id,
+                    "incident.proposal_id": proposal_id,
+                    "incident.action_id": option.action_id,
+                    "incident.scenario": evidence.scenario.value,
+                    "incident.scenario_kind": evidence.scenario_kind.value,
+                    "incident.proposal_revision": 1,
+                },
+            ):
+                self.store.create_proposal_and_transition(proposal, created_at.isoformat(), trace_id, actor, event_to_proposal_ms)
+            self.observability.record_event_to_proposal(
+                event_to_proposal_ms,
+                evidence.scenario.value,
+                evidence.scenario_kind.value,
+            )
         except Exception as exc:
             self.store.fail_run(run_id, self.clock.now().isoformat(), actor, getattr(exc, "reason_code", type(exc).__name__))
             if isinstance(exc, StoreConflict):
@@ -164,11 +213,25 @@ class IncidentService:
         return self.get_run(run_id)
 
     def decide(self, proposal_id: str, request: DecisionRequest, actor: str = "local-service") -> RunView:
+        with self.observability.span(
+            "incident.proposal.decide",
+            {
+                "incident.proposal_id": proposal_id,
+                "incident.proposal_revision": request.revision,
+                "incident.decision": request.decision.value,
+            },
+        ) as lifecycle_span:
+            return self._decide(proposal_id, request, actor, lifecycle_span)
+
+    def _decide(self, proposal_id: str, request: DecisionRequest, actor: str, lifecycle_span) -> RunView:
         proposal = self.store.get_proposal(proposal_id)
         if not proposal:
             raise NotFoundError("proposal not found")
         scenario = Scenario(proposal["scenario"])
         scenario_kind = ScenarioKind(proposal["scenario_kind"])
+        lifecycle_span.set_attribute("incident.run_id", proposal["run_id"])
+        lifecycle_span.set_attribute("incident.scenario", scenario.value)
+        lifecycle_span.set_attribute("incident.scenario_kind", scenario_kind.value)
         stored_option = RemediationOption.model_validate(proposal["option"])
         try:
             validate_scenario_action(scenario, scenario_kind, stored_option.action_id)
@@ -198,6 +261,11 @@ class IncidentService:
             }
         created_at = datetime.fromisoformat(proposal["created_at"])
         approval_wait_seconds = max(0.0, (now - created_at).total_seconds())
+        self.observability.record_decision(
+            approval_wait_seconds,
+            request.decision.value,
+            scenario.value,
+        )
         try:
             run_id, outcome = self.store.decide_proposal(
                 proposal_id,
@@ -216,6 +284,13 @@ class IncidentService:
         return self.get_run(run_id)
 
     def execute(self, proposal_id: str, actor: str = "local-service") -> RunView:
+        with self.observability.span(
+            "incident.remediation.execute",
+            {"incident.proposal_id": proposal_id},
+        ) as lifecycle_span:
+            return self._execute(proposal_id, actor, lifecycle_span)
+
+    def _execute(self, proposal_id: str, actor: str, lifecycle_span) -> RunView:
         if not self.execution_enabled:
             raise ExecutionDisabledError("remediation execution is disabled by configuration")
         proposal = self.store.get_proposal(proposal_id)
@@ -224,6 +299,10 @@ class IncidentService:
         scenario = Scenario(proposal["scenario"])
         scenario_kind = ScenarioKind(proposal["scenario_kind"])
         option = RemediationOption.model_validate(proposal["option"])
+        lifecycle_span.set_attribute("incident.run_id", proposal["run_id"])
+        lifecycle_span.set_attribute("incident.scenario", scenario.value)
+        lifecycle_span.set_attribute("incident.scenario_kind", scenario_kind.value)
+        lifecycle_span.set_attribute("incident.action_id", option.action_id)
         try:
             validate_scenario_action(scenario, scenario_kind, option.action_id)
         except SafetyViolation as exc:
@@ -254,7 +333,17 @@ class IncidentService:
             proposal_id,
         )
         try:
-            result = self.executor.execute(option)
+            with self.observability.span(
+                "incident.remediation.tool",
+                {
+                    "incident.run_id": run["run_id"],
+                    "incident.proposal_id": proposal_id,
+                    "incident.action_id": option.action_id,
+                    "incident.scenario": scenario.value,
+                    "incident.scenario_kind": scenario_kind.value,
+                },
+            ):
+                result = self.executor.execute(option)
             self.store.finalize_execution(
                 proposal_id,
                 result.success,
@@ -272,21 +361,40 @@ class IncidentService:
                     "boot_count": result.boot_count,
                 },
             )
+            self.observability.record_execution(
+                option.action_id,
+                scenario.value,
+                scenario_kind.value,
+                result.success,
+                result.failure_reason_code or "none",
+            )
         except Exception as exc:
+            reason_code = getattr(exc, "reason_code", type(exc).__name__)
             self.store.finalize_execution(
                 proposal_id,
                 False,
                 self.clock.now().isoformat(),
                 actor,
-                {"success": False, "failure_reason_code": getattr(exc, "reason_code", type(exc).__name__)},
+                {"success": False, "failure_reason_code": reason_code},
+            )
+            self.observability.record_execution(
+                option.action_id,
+                scenario.value,
+                scenario_kind.value,
+                False,
+                reason_code,
             )
         return self.get_run(claimed["run_id"])
 
     def expire_due(self, actor: str = "expiration-worker") -> int:
-        try:
-            return self.store.expire_due(self.clock.now().isoformat(), actor)
-        except StoreConflict as exc:
-            raise ConflictError(str(exc)) from exc
+        with self.observability.span("incident.proposal.expire_due") as lifecycle_span:
+            try:
+                count = self.store.expire_due(self.clock.now().isoformat(), actor)
+            except StoreConflict as exc:
+                raise ConflictError(str(exc)) from exc
+            lifecycle_span.set_attribute("incident.expired_count", count)
+            self.observability.record_expirations(count)
+            return count
 
     def get_run(self, run_id: str, duplicate: bool = False) -> RunView:
         run = self.store.get_run(run_id)
@@ -296,5 +404,10 @@ class IncidentService:
         return RunView(run_id=run["run_id"], trace_id=run["trace_id"], idempotency_key=run["idempotency_key"], state=run["state"], created_at=run["created_at"], updated_at=run["updated_at"], proposal=proposal, audit=self.store.list_audit(run_id), duplicate=duplicate)
 
     def close(self) -> None:
-        self.executor.close()
-        self.store.close()
+        try:
+            self.executor.close()
+        finally:
+            try:
+                self.store.close()
+            finally:
+                self.observability.shutdown()

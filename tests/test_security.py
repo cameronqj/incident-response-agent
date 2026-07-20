@@ -157,7 +157,7 @@ def test_event_body_and_shape_are_bounded(service, api_settings):
     oversized["payload"]["summary"] = "x" * 20_000
     too_large = _request(app, "POST", "/events", json=oversized, headers=headers)
     arbitrary = make_event("arbitrary").model_dump(mode="json")
-    arbitrary["payload"]["unsupported"] = {"nested": {"secret": "value"}}
+    arbitrary["payload"]["unsupported"] = {"nested": {"secret": "value"}}  # pragma: allowlist secret
     unsupported = _request(app, "POST", "/events", json=arbitrary, headers=headers)
     too_many_lines = make_event("too-many-lines").model_dump(mode="json")
     too_many_lines["payload"]["log_lines"] = ["line"] * 21

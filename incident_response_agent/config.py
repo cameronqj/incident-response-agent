@@ -4,6 +4,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .security import is_loopback_host
 
@@ -51,6 +52,10 @@ class Settings:
     execution_engine: str = "container"
     container_image: str = "docker.io/library/python@sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed33568873133f8fc69980419df"
     execution_timeout_seconds: float = 30.0
+    otel_enabled: bool = False
+    otel_service_name: str = "incident-response-agent"
+    otel_exporter_otlp_endpoint: str | None = None
+    otel_export_timeout_seconds: float = 5.0
 
     @classmethod
     def from_env(cls, dotenv_path: str = ".env") -> "Settings":
@@ -75,6 +80,10 @@ class Settings:
             execution_engine=os.getenv("EXECUTION_ENGINE", cls.execution_engine),
             container_image=os.getenv("CONTAINER_IMAGE", cls.container_image),
             execution_timeout_seconds=float(os.getenv("EXECUTION_TIMEOUT_SECONDS", cls.execution_timeout_seconds)),
+            otel_enabled=_strict_bool("OTEL_ENABLED", os.getenv("OTEL_ENABLED", "0")),
+            otel_service_name=os.getenv("OTEL_SERVICE_NAME", cls.otel_service_name),
+            otel_exporter_otlp_endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT") or None,
+            otel_export_timeout_seconds=float(os.getenv("OTEL_EXPORT_TIMEOUT_SECONDS", cls.otel_export_timeout_seconds)),
         )
         settings.validate()
         return settings
@@ -101,3 +110,17 @@ class Settings:
             raise ConfigurationError("LAB_MODE must be exactly 'synthetic' or 'container-service'")
         if self.lab_mode == "container-service" and not self.execution_enabled:
             raise ConfigurationError("LAB_MODE=container-service requires EXECUTION_ENABLED=1")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", self.otel_service_name):
+            raise ConfigurationError("OTEL_SERVICE_NAME must be a bounded service identifier")
+        if self.otel_export_timeout_seconds <= 0:
+            raise ConfigurationError("OTEL_EXPORT_TIMEOUT_SECONDS must be positive")
+        if self.otel_enabled and not self.otel_exporter_otlp_endpoint:
+            raise ConfigurationError("OTEL_ENABLED=1 requires OTEL_EXPORTER_OTLP_ENDPOINT")
+        if self.otel_exporter_otlp_endpoint:
+            parsed = urlsplit(self.otel_exporter_otlp_endpoint)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                raise ConfigurationError("OTEL_EXPORTER_OTLP_ENDPOINT must be an HTTP(S) origin")
+            if parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in {"", "/"}:
+                raise ConfigurationError("OTEL_EXPORTER_OTLP_ENDPOINT must not contain credentials, a path, query, or fragment")
+            if parsed.scheme == "http" and not is_loopback_host(parsed.hostname):
+                raise ConfigurationError("unencrypted OTLP export is allowed only to a loopback endpoint")

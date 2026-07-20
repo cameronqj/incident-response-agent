@@ -7,6 +7,7 @@ from .config import Settings
 from .container_lab import DisposableContainerService
 from .executor import ContainerRemediationExecutor, DisabledExecutor, DisposableServiceRestartExecutor
 from .model import FakeAnalyzer, LiveOpenAICompatibleAnalyzer
+from .observability import build_observability
 from .service import IncidentService
 from .sandbox import DisposableSandbox
 from .storage import SQLiteStore
@@ -17,6 +18,11 @@ def build_service(settings: Settings | None = None) -> IncidentService:
     settings = settings or Settings.from_env()
     settings.validate()
     store = SQLiteStore(settings.database_path)
+    try:
+        observability = build_observability(settings)
+    except Exception:
+        store.close()
+        raise
     if settings.app_mode == "live":
         api_key = os.getenv(settings.api_key_env)
         if not api_key:
@@ -36,6 +42,7 @@ def build_service(settings: Settings | None = None) -> IncidentService:
         try:
             target.start()
         except Exception:
+            observability.shutdown()
             store.close()
             raise
         telemetry = ContainerServiceTelemetry(target)
@@ -62,4 +69,5 @@ def build_service(settings: Settings | None = None) -> IncidentService:
         proposal_ttl_seconds=settings.proposal_ttl_seconds,
         expiration_poll_seconds=settings.expiration_poll_seconds,
         execution_enabled=settings.execution_enabled,
+        observability=observability,
     )

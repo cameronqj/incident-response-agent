@@ -75,6 +75,7 @@ def create_app(service: IncidentService | None = None, settings: Settings | None
     def expire(request: Request) -> dict:
         return {"expired_count": service.expire_due(actor=request.state.actor)}
 
+    service.observability.instrument_fastapi(app)
     return app
 
 

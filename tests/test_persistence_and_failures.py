@@ -113,7 +113,7 @@ def test_legacy_database_migration_redacts_events_and_expires_active_proposals(t
     )
     connection.execute(
         "INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        ("run-1", "legacy", "old-hash", json.dumps({"payload": {"scenario": "disk", "api_key": "legacy-secret"}}), "trace-1", "proposed", "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+        ("run-1", "legacy", "old-hash", json.dumps({"payload": {"scenario": "disk", "api_key": "legacy-secret"}}), "trace-1", "proposed", "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),  # pragma: allowlist secret
     )
     connection.execute(
         "INSERT INTO proposals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
