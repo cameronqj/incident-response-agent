@@ -16,7 +16,7 @@ This repository is a bounded POC, not a production incident-response service.
 | Threat | POC mitigation | Remaining limitation |
 | --- | --- | --- |
 | Unauthorized approval or execution | Header-only bearer authentication, constant-time comparison, execution opt-in | One token grants all mutation authority |
-| Sandbox or target escape | Owned sandbox/target capabilities, real-path and ownership-label checks, fixed actions, exact container ID, one bind mount | Container/runtime vulnerabilities and principals with engine-level access remain out of scope |
+| Sandbox or target escape | Owned sandbox/target capabilities, real-path and ownership-label checks, fixed actions, exact container ID, one bind mount; fixed action directories receive temporary container access and return to owner-only modes | Container/runtime vulnerabilities, local races during the bounded execution window, and principals with engine-level access remain out of scope |
 | Malicious event input | 16 KiB body limit, typed schema, bounded strings/lists, normalization and redaction | This is not production webhook validation |
 | Prompt injection through logs | Synthetic bounded evidence and structured model output; deterministic policy is authoritative | Live-model assessment quality is not guaranteed |
 | Secret leakage | Tokens never enter service records; assignment-style and JSON-shaped credentials, home paths, and private IPs are redacted before event/audit persistence | Operators must still protect process environment and local `.env` |

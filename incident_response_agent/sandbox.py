@@ -104,6 +104,28 @@ class DisposableSandbox:
             raise SandboxViolation("sandbox child escaped root") from exc
         return resolved
 
+    def prepare_container_access(self, relative_directories: tuple[str, ...]) -> None:
+        """Temporarily expose only fixed action directories to a remapped UID."""
+        self.validate()
+        directories: list[Path] = []
+        for relative in relative_directories:
+            directory = self.resolve_child(relative)
+            directory.mkdir(parents=True, exist_ok=True)
+            directories.append(directory)
+        self.root.chmod(0o711)
+        for directory in directories:
+            directory.chmod(0o777)
+
+    def restore_owner_access(self, relative_directories: tuple[str, ...]) -> None:
+        """Restore process-owner-only access after a container command."""
+        for relative in sorted(relative_directories, key=lambda item: len(Path(item).parts), reverse=True):
+            directory = self.root / relative
+            if directory.is_dir() and not directory.is_symlink():
+                directory.chmod(0o700)
+        if self.root.is_dir() and not self.root.is_symlink():
+            self.root.chmod(0o700)
+        self.validate()
+
     def close(self) -> None:
         if self._temporary_directory is not None:
             self._temporary_directory.cleanup()

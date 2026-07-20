@@ -122,8 +122,8 @@ class DisposableContainerService:
         uid = process_uid if process_uid != 0 else 65532
         gid = process_gid if process_uid != 0 else 65532
         if process_uid == 0:
-            self.sandbox.root.chmod(0o711)
-            services.chmod(0o777)
+            services.chmod(0o700)
+        self.sandbox.prepare_container_access(("services",))
         command = [
             self.engine,
             "run",
@@ -143,10 +143,6 @@ class DisposableContainerService:
             "--cap-drop=ALL",
             "--security-opt=no-new-privileges",
         ]
-        if not self._is_podman:
-            # Match the process-owned sandbox UID when Docker daemon user
-            # remapping is enabled; the container process remains non-root.
-            command.append("--userns=host")
         command.extend([
             "--user",
             f"{uid}:{gid}",
@@ -286,5 +282,11 @@ class DisposableContainerService:
             self.container_id = None
             self.sandbox.close()
         finally:
-            if hasattr(os, "geteuid") and os.geteuid() == 0 and self.sandbox.root.exists():
-                self.sandbox.root.chmod(0o700)
+            if self.sandbox.root.exists():
+                try:
+                    self.sandbox.restore_owner_access(("services",))
+                except (OSError, ValueError) as exc:
+                    raise ContainerLabError(
+                        "sandbox_permission_restore_failed",
+                        "disposable service sandbox permissions could not be restored",
+                    ) from exc

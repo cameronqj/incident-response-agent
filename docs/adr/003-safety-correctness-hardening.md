@@ -15,6 +15,8 @@ Use SQLite immediate transactions and conditional state updates to atomically cl
 
 Expired proposals are retained and inspectable in SQLite and audit history. No archive state or automatic deletion is introduced.
 
+For rootless or UID-remapping container runtimes, keep the disposable root and ownership marker process-owned while temporarily granting the non-root container access only to the fixed action subdirectories. Restore owner-only directory modes after every success, failure, or timeout. Do not disable user-namespace isolation or accept a caller-selected path.
+
 ## Rationale
 
 These controls close the POC's concrete authorization, stale-execution, duplicate-side-effect, sandbox-root, and raw-persistence risks without adding production identity, orchestration, or incident-management infrastructure.

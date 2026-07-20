@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import re
 import os
+import re
 import shutil
 import subprocess
 import uuid
-from pathlib import Path
 from typing import Protocol
 
 from .container_lab import ContainerLabError, DisposableContainerService
@@ -213,6 +212,14 @@ print(f'cleanup_log_storm_temp_files deleted={deleted}')
 """,
 }
 
+CONTAINER_ACTION_DIRECTORIES = {
+    "cleanup_rotated_logs": ("logs",),
+    "stop_runaway_process": ("processes",),
+    "restart_disposable_service": ("services",),
+    "stop_memory_hog": ("memory",),
+    "cleanup_log_storm_temp_files": ("logs", "logs/storm", "tmp"),
+}
+
 
 class ContainerRemediationExecutor:
     """Execute only the fixed allowlisted cleanup inside an isolated container."""
@@ -236,14 +243,10 @@ class ContainerRemediationExecutor:
         process_gid = os.getegid() if hasattr(os, "getegid") else 65532
         uid = process_uid if process_uid != 0 else 65532
         gid = process_gid if process_uid != 0 else 65532
+        writable_directories = CONTAINER_ACTION_DIRECTORIES[option.action_id]
         try:
             self.sandbox.validate()
-            if process_uid == 0:
-                self.sandbox.root.chmod(0o711)
-                for relative in ("logs", "logs/storm", "tmp", "processes", "memory", "services"):
-                    directory = self.sandbox.resolve_child(relative)
-                    directory.mkdir(parents=True, exist_ok=True)
-                    directory.chmod(0o777)
+            self.sandbox.prepare_container_access(writable_directories)
             command = [
                 self.engine,
                 "run",
@@ -260,10 +263,6 @@ class ContainerRemediationExecutor:
                 "--cap-drop=ALL",
                 "--security-opt=no-new-privileges",
             ]
-            if Path(self.engine).name == "docker":
-                # Docker daemons may remap UIDs. Preserve the host UID mapping so
-                # this non-root process can access only its process-owned sandbox.
-                command.append("--userns=host")
             command.extend([
                 "--user",
                 f"{uid}:{gid}",
@@ -294,8 +293,15 @@ class ContainerRemediationExecutor:
                 )
             except (OSError, subprocess.TimeoutExpired):
                 pass
-            if process_uid == 0 and self.sandbox.root.exists():
-                self.sandbox.root.chmod(0o700)
+            if self.sandbox.root.exists():
+                try:
+                    self.sandbox.restore_owner_access(writable_directories)
+                except (OSError, SandboxViolation):
+                    return ExecutionResult(
+                        False,
+                        "sandbox permissions could not be restored",
+                        failure_reason_code="sandbox_permission_restore_failed",
+                    )
         if result.returncode != 0:
             diagnostic = (result.stderr or result.stdout).replace(str(self.sandbox.root), "<sandbox>").strip()[:512]
             return ExecutionResult(

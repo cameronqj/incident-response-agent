@@ -94,23 +94,8 @@ def test_target_launch_is_hardened_owned_and_cleaned(tmp_path, monkeypatch):
     target.close()
     assert calls[-2][1:5] == ["rm", "-f", "--time", "0"]
     assert removed is True
-
-
-def test_docker_target_preserves_host_uid_mapping(tmp_path, monkeypatch):
-    sandbox = DisposableSandbox.create_test_fixture(tmp_path / "sandbox")
-    target = DisposableContainerService(sandbox, TEST_IMAGE, "/usr/bin/docker", timeout_seconds=2)
-    calls: list[list[str]] = []
-
-    def fake_run(command, **kwargs):
-        calls.append(command)
-        if command[1] == "run":
-            (sandbox.root / "services" / "boot-count").write_text("1", encoding="utf-8")
-            return subprocess.CompletedProcess(command, 0, stdout=CID, stderr="")
-        return subprocess.CompletedProcess(command, 0, stdout=json.dumps(_record(target)), stderr="")
-
-    monkeypatch.setattr("incident_response_agent.container_lab.subprocess.run", fake_run)
-    target.start()
-    assert "--userns=host" in calls[0]
+    assert sandbox.root.stat().st_mode & 0o777 == 0o700
+    assert (sandbox.root / "services").stat().st_mode & 0o777 == 0o700
 
 
 def test_target_rejects_ownership_label_mismatch(tmp_path, monkeypatch):
