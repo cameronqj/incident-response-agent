@@ -160,7 +160,7 @@ def test_agent_remediation_executes_inside_container(tmp_path, action_id):
             action_preview="fixed",
         )
     )
-    assert result.success, result.failure_reason_code
+    assert result.success, f"{result.failure_reason_code}: {result.diagnostic}"
     assert not marker.exists()
     if action_id == "cleanup_log_storm_temp_files":
         assert not (sandbox.root / "tmp" / "cache.tmp").exists()

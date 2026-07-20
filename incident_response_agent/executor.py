@@ -26,6 +26,7 @@ class ExecutionResult:
         attempts: int = 0,
         latency_ms: int = 0,
         boot_count: int = 0,
+        diagnostic: str | None = None,
     ):
         self.success = success
         self.message = message
@@ -37,6 +38,9 @@ class ExecutionResult:
         self.attempts = attempts
         self.latency_ms = latency_ms
         self.boot_count = boot_count
+        # Runtime diagnostics are intentionally not written to audit records or API
+        # responses. They exist only so direct adapter tests can explain failures.
+        self.diagnostic = diagnostic
 
 
 class RemediationExecutor(Protocol):
@@ -286,7 +290,13 @@ class ContainerRemediationExecutor:
             if process_uid == 0 and self.sandbox.root.exists():
                 self.sandbox.root.chmod(0o700)
         if result.returncode != 0:
-            return ExecutionResult(False, "container cleanup failed", failure_reason_code="container_exit_nonzero")
+            diagnostic = (result.stderr or result.stdout).replace(str(self.sandbox.root), "<sandbox>").strip()[:512]
+            return ExecutionResult(
+                False,
+                "container cleanup failed",
+                failure_reason_code="container_exit_nonzero",
+                diagnostic=diagnostic or "container exited without diagnostic output",
+            )
         match = re.search(r"deleted=(\d+)", result.stdout)
         deleted = int(match.group(1)) if match else 0
         return ExecutionResult(True, "container cleanup completed", deleted_count=deleted)

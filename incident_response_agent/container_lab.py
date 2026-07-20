@@ -227,7 +227,18 @@ class DisposableContainerService:
                 return last, attempts
             time.sleep(0.25)
         actual = last.health_status if last else "unknown"
-        raise ContainerLabError("target_health_timeout", f"target health remained {actual}, expected {expected}")
+        detail = ""
+        try:
+            state = self._inspect_raw().get("State") or {}
+            health = state.get("Health") or {}
+            logs = health.get("Log") or []
+            if logs:
+                output = str(logs[-1].get("Output", "")).replace(str(self.sandbox.root), "<sandbox>").strip()[:512]
+                if output:
+                    detail = f": {output}"
+        except ContainerLabError:
+            pass
+        raise ContainerLabError("target_health_timeout", f"target health remained {actual}, expected {expected}{detail}")
 
     def restart_and_wait(self) -> RestartObservation:
         before = self.snapshot()
