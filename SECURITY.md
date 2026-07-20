@@ -19,7 +19,8 @@ This repository is a bounded POC, not a production incident-response service.
 | Sandbox or target escape | Owned sandbox/target capabilities, real-path and ownership-label checks, fixed actions, exact container ID, one bind mount | Container/runtime vulnerabilities and principals with engine-level access remain out of scope |
 | Malicious event input | 16 KiB body limit, typed schema, bounded strings/lists, normalization and redaction | This is not production webhook validation |
 | Prompt injection through logs | Synthetic bounded evidence and structured model output; deterministic policy is authoritative | Live-model assessment quality is not guaranteed |
-| Secret leakage | Tokens never enter service records; events and audit metadata are redacted before persistence | Operators must still protect process environment and local `.env` |
+| Secret leakage | Tokens never enter service records; assignment-style and JSON-shaped credentials, home paths, and private IPs are redacted before event/audit persistence | Operators must still protect process environment and local `.env` |
+| Oversized or malicious model output | Provider responses are read through a 65,536-byte limit; strict schemas bound text, lists, and fields before persistence; model output cannot define commands or targets | Model assessment quality and provider availability remain variable |
 | Stale proposal execution | Scenario-bound digest, TTL recheck, atomic execution claim | Claimed executions are not automatically recovered after process crash |
 | Duplicate delivery or requests | Unique idempotency key and transactional create-or-return | Callers must poll an in-progress duplicate run |
 | Concurrent decisions | SQLite immediate transactions and conditional updates | SQLite remains a single-node POC store |

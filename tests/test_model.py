@@ -3,9 +3,10 @@ from __future__ import annotations
 import urllib.error
 
 import pytest
+from pydantic import ValidationError
 
-from incident_response_agent.model import LiveOpenAICompatibleAnalyzer, ModelAnalysisError
-from incident_response_agent.schemas import TelemetryEvidence
+from incident_response_agent.model import MAX_MODEL_RESPONSE_BYTES, LiveOpenAICompatibleAnalyzer, ModelAnalysisError
+from incident_response_agent.schemas import ModelAssessment, TelemetryEvidence
 
 
 def _evidence() -> TelemetryEvidence:
@@ -36,3 +37,38 @@ def test_live_model_classifies_retryable_and_unsafe_failures(monkeypatch, status
         analyzer.analyze(_evidence())
     assert raised.value.reason_code == expected_reason
     assert calls == expected_calls
+
+
+def test_live_model_rejects_oversized_provider_response_before_parsing(monkeypatch):
+    class OversizedResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, limit):
+            assert limit == MAX_MODEL_RESPONSE_BYTES + 1
+            return b"x" * limit
+
+    monkeypatch.setattr("incident_response_agent.model.urllib.request.urlopen", lambda *_args, **_kwargs: OversizedResponse())
+    analyzer = LiveOpenAICompatibleAnalyzer("https://example.test/v1", "model", "key", 1, max_retries=2)
+
+    with pytest.raises(ModelAnalysisError) as raised:
+        analyzer.analyze(_evidence())
+
+    assert raised.value.reason_code == "model_response_too_large"
+
+
+def test_model_evidence_reference_items_are_individually_bounded():
+    valid = {
+        "summary": "bounded",
+        "severity": "high",
+        "confidence": 1,
+        "evidence_refs": ["x" * 500],
+        "action_id": "cleanup_rotated_logs",
+    }
+    assert ModelAssessment.model_validate(valid).evidence_refs == ["x" * 500]
+
+    with pytest.raises(ValidationError):
+        ModelAssessment.model_validate({**valid, "evidence_refs": ["x" * 501]})

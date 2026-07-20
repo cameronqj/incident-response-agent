@@ -126,7 +126,7 @@ class ModelAssessment(BaseModel):
     summary: str = Field(min_length=1, max_length=2000)
     severity: str = Field(pattern="^(low|medium|high|critical)$")
     confidence: float = Field(ge=0, le=1)
-    evidence_refs: List[str] = Field(default_factory=list, max_length=20)
+    evidence_refs: List[ShortText] = Field(default_factory=list, max_length=20)
     action_id: str = Field(min_length=1, max_length=128)
 
 

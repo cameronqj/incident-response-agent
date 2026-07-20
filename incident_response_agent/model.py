@@ -11,6 +11,9 @@ from .policy import allowed_actions
 from .schemas import ModelAssessment, Scenario, ScenarioKind, TelemetryEvidence
 
 
+MAX_MODEL_RESPONSE_BYTES = 65_536
+
+
 @dataclass(frozen=True)
 class ModelResult:
     assessment: ModelAssessment
@@ -118,7 +121,13 @@ class LiveOpenAICompatibleAnalyzer:
                     method="POST",
                 )
                 with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                    body = json.loads(response.read().decode("utf-8"))
+                    raw_body = response.read(MAX_MODEL_RESPONSE_BYTES + 1)
+                if len(raw_body) > MAX_MODEL_RESPONSE_BYTES:
+                    raise ModelAnalysisError(
+                        "model_response_too_large",
+                        f"live model response exceeded {MAX_MODEL_RESPONSE_BYTES} bytes",
+                    )
+                body = json.loads(raw_body.decode("utf-8"))
                 content = body["choices"][0]["message"]["content"]
                 if isinstance(content, list):
                     content = "".join(part.get("text", "") for part in content if isinstance(part, dict))

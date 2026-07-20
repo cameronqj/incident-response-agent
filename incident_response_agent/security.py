@@ -32,6 +32,10 @@ SENSITIVE_KEY_PARTS = (
 ASSIGNMENT_PATTERN = re.compile(
     r"(?i)\b(api[_-]?key|authorization|bearer|credential|password|secret|token|username|user)\s*[:=]\s*[^\s,;]+"
 )
+JSON_CREDENTIAL_PATTERN = re.compile(
+    r"(?i)(?P<prefix>[\"'](?:api[_-]?key|authorization|bearer|credential|password|secret|token|username|user)[\"']\s*:\s*)"
+    r"(?P<quote>[\"'])(?:\\.|(?!(?P=quote)).)*(?P=quote)"
+)
 BEARER_PATTERN = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")
 UNIX_HOME_PATTERN = re.compile(r"(?<![A-Za-z0-9_])/(?:Users|home)/[^/\s]+(?:/[^\s]*)?")
 WINDOWS_HOME_PATTERN = re.compile(r"(?i)\b[A-Z]:\\Users\\[^\s\\]+(?:\\[^\s]*)?")
@@ -67,6 +71,10 @@ def is_sensitive_key(key: str) -> bool:
 
 def sanitize_text(value: str) -> str:
     sanitized = BEARER_PATTERN.sub("Bearer [REDACTED]", value)
+    sanitized = JSON_CREDENTIAL_PATTERN.sub(
+        lambda match: f'{match.group("prefix")}{match.group("quote")}[REDACTED]{match.group("quote")}',
+        sanitized,
+    )
     sanitized = ASSIGNMENT_PATTERN.sub("[REDACTED_CREDENTIAL]", sanitized)
     sanitized = UNIX_HOME_PATTERN.sub("[REDACTED_PATH]", sanitized)
     sanitized = WINDOWS_HOME_PATTERN.sub("[REDACTED_PATH]", sanitized)

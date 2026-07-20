@@ -123,8 +123,8 @@ def test_token_and_sensitive_event_values_never_reach_sqlite_or_audit(service, a
     app = create_app(incident, api_settings)
     event = make_event(
         "redacted-event",
-        summary="Bearer payload-secret from /Users/alice/private at 192.168.1.4 token=payload-token",
-        log_lines=["api_key=raw-api-key password=raw-password"],
+        summary='Bearer payload-secret from /Users/alice/private at 192.168.1.4 token=payload-token {"token": "json-secret"}',  # pragma: allowlist secret
+        log_lines=['api_key=raw-api-key password=raw-password {"credentials":{"api_key":"json-api-secret","password":"json-password"}}'],  # pragma: allowlist secret
         context=[{"key": "nested_secret", "value": "nested-secret-value"}],
     )
     response = _request(
@@ -137,13 +137,14 @@ def test_token_and_sensitive_event_values_never_reach_sqlite_or_audit(service, a
     assert response.status_code == 202
     database_dump = "\n".join(incident.store.connection.iterdump())
     combined = database_dump + response.text + caplog.text
-    for secret in (TEST_TOKEN, "payload-secret", "payload-token", "raw-api-key", "raw-password", "nested-secret-value", "/Users/alice/private", "192.168.1.4"):
+    for secret in (TEST_TOKEN, "payload-secret", "payload-token", "raw-api-key", "raw-password", "json-secret", "json-api-secret", "json-password", "nested-secret-value", "/Users/alice/private", "192.168.1.4"):
         assert secret not in combined
     assert "bearer-token-user" in database_dump
     persisted = json.loads(incident.store.connection.execute("SELECT event_json FROM runs WHERE idempotency_key = 'redacted-event'").fetchone()[0])
     assert persisted["payload"]["context"][0]["value"] == "[REDACTED]"
     assert "[REDACTED_PATH]" in persisted["payload"]["summary"]
     assert "[REDACTED_IP]" in persisted["payload"]["summary"]
+    assert '"token": "[REDACTED]"' in persisted["payload"]["summary"]
     api_metadata = [item["metadata"] for item in response.json()["audit"]]
     database_metadata = [item["metadata"] for item in incident.store.list_audit(response.json()["run_id"])]
     assert api_metadata == database_metadata

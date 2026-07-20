@@ -8,7 +8,7 @@
 - Provides an opt-in lab that detects a real unhealthy disposable container service, uses demo or live inference, and restarts that exact service only after approval.
 - Separately verifies genuine bounded ENOSPC and OOM behavior in disposable containers.
 - Enforces idempotent intake, immutable proposal/action-digest approval, atomic SQLite state claims, execution expiry, and expire-and-retain semantics.
-- Records sanitized state, model, approval, execution, retry, failure, and actor observations.
+- Records sanitized state, model, approval, execution, retry, failure, and actor observations; assignment-style and JSON-shaped credentials are redacted before event persistence.
 - Supports deterministic offline analysis and an optional generic OpenAI-compatible live-inference adapter.
 
 ## What it does not do
@@ -109,6 +109,8 @@ RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live
 ```
 
 Defaults are base URL `https://opencode.ai/zen/go/v1`, model `deepseek-v4-flash`, and API-key environment variable `OPENCODE_KEY`. They remain configurable through `MODEL_BASE_URL`, `MODEL_NAME`, and `MODEL_API_KEY_ENV`. Live mode fails clearly when its key is absent and never falls back to fake inference.
+
+Live provider responses are read through a 65,536-byte hard limit before parsing. Structured assessment summaries are limited to 2,000 characters, `evidence_refs` to 20 items of at most 500 characters each, and unknown fields are rejected.
 
 The combined real-model/real-service cycle is separately opt-in:
 
