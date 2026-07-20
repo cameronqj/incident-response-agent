@@ -1,5 +1,7 @@
 # incident-response-agent
 
+[![CI](https://github.com/cameronqj/incident-response-agent/actions/workflows/test.yml/badge.svg)](https://github.com/cameronqj/incident-response-agent/actions/workflows/test.yml)
+
 `incident-response-agent` is a bounded incident-response experiment. It receives a local event, collects bounded evidence, produces a structured remediation proposal, waits for an explicit human decision, and executes only a scenario-and-evidence-kind-compatible allowlisted action inside a disposable environment.
 
 ## What it does
