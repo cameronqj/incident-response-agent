@@ -1,5 +1,9 @@
 # GitHub Issue #1 — Build the first incident-response vertical slice
 
+- Status: completed
+- Issue: https://github.com/cameronqj/incident-response-agent/issues/1
+- Implementation: commits `6219cc7`, `2141056`, `df3e9e5`, `6dd387c`, `7415051`, `ed33c8c`, and `4ef50f9`
+
 ## Goal
 
 Implement the bounded disk-exhaustion workflow described in ADR 001.

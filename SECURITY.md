@@ -21,7 +21,7 @@ This repository is a bounded POC, not a production incident-response service.
 | Prompt injection through logs | Synthetic bounded evidence and structured model output; deterministic policy is authoritative | Live-model assessment quality is not guaranteed |
 | Secret leakage | Tokens never enter service records; assignment-style and JSON-shaped credentials, home paths, and private IPs are redacted before event/audit persistence | Operators must still protect process environment and local `.env` |
 | Oversized or malicious model output | Provider responses are read through a 65,536-byte limit; strict schemas bound text, lists, and fields before persistence; model output cannot define commands or targets | Model assessment quality and provider availability remain variable |
-| Stale proposal execution | Scenario-bound digest, TTL recheck, atomic execution claim | Claimed executions are not automatically recovered after process crash |
+| Stale proposal execution | Scenario-bound digest, TTL recheck, atomic execution claim | Claimed executions are not automatically recovered after process crash; reconciliation is tracked in [Issue #2](https://github.com/cameronqj/incident-response-agent/issues/2) |
 | Duplicate delivery or requests | Unique idempotency key and transactional create-or-return | Callers must poll an in-progress duplicate run |
 | Concurrent decisions | SQLite immediate transactions and conditional updates | SQLite remains a single-node POC store |
 | Unauthorized container targeting | Target identity is generated internally; scenario-kind policy separates marker reset from real restart | The POC has no general container inventory or production target authorization model |
