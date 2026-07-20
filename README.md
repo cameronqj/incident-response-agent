@@ -2,20 +2,69 @@
 
 [![CI](https://github.com/cameronqj/incident-response-agent/actions/workflows/test.yml/badge.svg)](https://github.com/cameronqj/incident-response-agent/actions/workflows/test.yml)
 
-`incident-response-agent` is a bounded incident-response experiment. It receives a local event, collects bounded evidence, produces a structured remediation proposal, waits for an explicit human decision, and executes only a scenario-and-evidence-kind-compatible allowlisted action inside a disposable environment.
+`incident-response-agent` is an observability-focused POC that uses a bounded incident-remediation workflow as its demonstration workload. It shows how traces, metrics, structured audit events, correlation IDs, model telemetry, and security-conscious redaction follow one request from intake through assessment, approval, execution, and verification.
 
-## What it does
+The goal is to demonstrate observable application behavior across a realistic multi-stage workflow, not to provide a production incident-response product.
 
-- Demonstrates disk exhaustion, CPU pressure, memory pressure, restart-loop, and log-storm workflows using synthetic marker fixtures.
-- Provides an opt-in lab that detects a real unhealthy disposable container service, uses demo or live inference, and restarts that exact service only after approval.
-- Separately verifies genuine bounded ENOSPC and OOM behavior in disposable containers.
-- Enforces idempotent intake, immutable proposal/action-digest approval, atomic SQLite state claims, execution expiry, and expire-and-retain semantics.
-- Records sanitized state, model, approval, execution, retry, failure, and actor observations; assignment-style and JSON-shaped credentials are redacted before event persistence.
-- Supports deterministic offline analysis and an optional generic OpenAI-compatible live-inference adapter.
+## What it demonstrates
 
-## What it does not do
+- Correlated FastAPI and workflow spans across intake, telemetry collection, model analysis, proposal creation, approval, execution, and expiration.
+- Bounded metrics for event-to-proposal latency, model latency/tokens/retries, approval wait, execution outcomes, and expirations.
+- A durable SQLite audit trail for sanitized state transitions, model observations, decisions, retries, failures, execution results, and actor labels.
+- OTLP/HTTP export to a real disposable OpenTelemetry Collector, with strict attribute allowlists and secret-leakage regression tests.
+- Deterministic offline instrumentation tests plus separately labeled container and live-inference evidence.
+- A realistic workflow workload: synthetic disk, CPU, memory, restart-loop, and log-storm scenarios; bounded ENOSPC/OOM checks; and one real unhealthy disposable-service recovery cycle.
 
-This is not production incident response. It does not inspect or remediate host or production processes and services, authenticate production webhooks, provide production identity or RBAC, execute model-generated commands, or offer autonomous remediation. Marker removal tests workflow, policy, approval, persistence, and audit behavior; only the explicitly enabled container-service lab performs a real restart, and only against the service it created and owns.
+## Signal coverage
+
+| Signal | Implemented evidence | Deliberate boundary |
+| --- | --- | --- |
+| Traces | FastAPI server spans, parented lifecycle spans, tool/executor spans, errors, normalized routes | No production sampling or trace backend |
+| Metrics | Latency histograms, model token/retry counts, approval wait, execution outcomes, expirations, standard HTTP metrics | Bounded attributes; no dashboards or alert rules |
+| Structured audit events | Trace-correlated SQLite history for workflow state, decisions, failures, actors, and results | Durable POC audit store, not a general log platform |
+| Logs | Bounded event log lines are normalized, sanitized, and available as workflow evidence | No OpenTelemetry Logs pipeline or centralized log backend is claimed |
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Event[Local event] --> API[FastAPI intake]
+    API --> Workflow[Observable workflow lifecycle]
+    Workflow --> Assessment[Telemetry and model assessment]
+    Assessment --> Approval[Immutable proposal and approval]
+    Approval --> Sandbox[Disposable execution and verification]
+    Workflow --> Audit[(SQLite audit history)]
+    API --> OTel[OpenTelemetry SDK]
+    Workflow --> OTel
+    OTel --> Collector[OTLP Collector]
+```
+
+The incident workflow provides enough branching, latency, failure, approval, and side-effect behavior to make telemetry meaningful. SQLite records the sanitized durable history; OpenTelemetry supplies operational traces and metrics. Both are correlated without exporting event bodies, prompts, evidence text, credentials, paths, or arbitrary model output.
+
+## Scope boundary
+
+This is not production incident response or a production observability platform. It does not inspect or remediate host or production processes and services, authenticate production webhooks, provide production identity or RBAC, execute model-generated commands, offer autonomous remediation, export OpenTelemetry logs, or configure a production telemetry backend. Marker removal tests workflow, policy, approval, persistence, audit, and instrumentation behavior; only the explicitly enabled container-service lab performs a real restart, and only against the service it created and owns.
+
+## OpenTelemetry export
+
+OpenTelemetry traces and metrics are disabled by default. SQLite audit history remains the durable source of truth. To export OTLP/HTTP to a local collector:
+
+```bash
+OTEL_ENABLED=1 \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
+OTEL_SERVICE_NAME=incident-response-agent \
+  .venv/bin/python -m incident_response_agent.cli serve
+```
+
+Manual spans cover event intake, telemetry collection, model analysis, proposal creation and decision, remediation execution/tool invocation, and expiration. Metrics cover event-to-proposal time, model latency/tokens/retries, approval wait, execution outcomes, and expirations. FastAPI request spans and standard HTTP metrics are also enabled.
+
+Exporter attributes are deliberately narrow: generated workflow IDs, proposal revision, scenario/kind, allowlisted action ID, decision, result, reason code, counts, and durations. Authorization headers, event bodies, prompts, evidence or model text, log lines, paths, API keys, tokens, and arbitrary model output are not exported. An HTTP exporter may target loopback only; remote collectors require HTTPS. This POC does not configure a production collector, authentication, sampling policy, dashboards, alerts, telemetry retention, or an OpenTelemetry Logs pipeline.
+
+The collector integration test uses a digest-pinned disposable OpenTelemetry Collector and remains opt-in with the other container evidence:
+
+```bash
+RUN_CONTAINER_TESTS=1 .venv/bin/python -m pytest tests/test_otel_collector_integration.py
+```
 
 ## Quickstart
 
@@ -118,27 +167,6 @@ The combined real-model/real-service cycle is separately opt-in:
 
 ```bash
 RUN_CONTAINER_TESTS=1 RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live
-```
-
-## Optional OpenTelemetry
-
-OpenTelemetry traces and metrics are disabled by default. SQLite audit history remains the durable source of truth. To export OTLP/HTTP to a local collector:
-
-```bash
-OTEL_ENABLED=1 \
-OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
-OTEL_SERVICE_NAME=incident-response-agent \
-  .venv/bin/python -m incident_response_agent.cli serve
-```
-
-Manual spans cover event intake, telemetry collection, model analysis, proposal creation and decision, remediation execution/tool invocation, and expiration. Metrics cover event-to-proposal time, model latency/tokens/retries, approval wait, execution outcomes, and expirations. FastAPI request spans and standard HTTP metrics are also enabled.
-
-Exporter attributes are deliberately narrow: generated workflow IDs, proposal revision, scenario/kind, allowlisted action ID, decision, result, reason code, counts, and durations. Authorization headers, event bodies, prompts, evidence or model text, logs, paths, API keys, tokens, and arbitrary model output are not exported. An HTTP exporter may target loopback only; remote collectors require HTTPS. This POC does not configure a production collector, authentication, sampling policy, dashboards, alerts, or telemetry retention.
-
-The collector integration test uses a digest-pinned disposable OpenTelemetry Collector and remains opt-in with the other container evidence:
-
-```bash
-RUN_CONTAINER_TESTS=1 .venv/bin/python -m pytest tests/test_otel_collector_integration.py
 ```
 
 ## Evidence level
