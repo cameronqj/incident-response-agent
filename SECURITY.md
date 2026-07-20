@@ -9,6 +9,7 @@ This repository is a bounded POC, not a production incident-response service.
 - Execution is disabled by default and, when enabled, is confined to a validated disposable container sandbox or one internally created disposable service target.
 - Event intake accepts only typed local simulations. Production webhook authentication is not implemented.
 - Real host and production-service inspection and remediation are not implemented. The opt-in service lab can inspect and restart only its own disposable target.
+- OpenTelemetry export is disabled by default, uses a strict attribute allowlist, and does not replace sanitized SQLite audit records.
 
 ## Threat model
 
@@ -24,5 +25,6 @@ This repository is a bounded POC, not a production incident-response service.
 | Concurrent decisions | SQLite immediate transactions and conditional updates | SQLite remains a single-node POC store |
 | Unauthorized container targeting | Target identity is generated internally; scenario-kind policy separates marker reset from real restart | The POC has no general container inventory or production target authorization model |
 | Incomplete cleanup | Exact-ID removal with bounded stop time and post-removal inspection | Abrupt host or runtime failure can leave a labeled disposable container for manual cleanup |
+| Telemetry exfiltration | Opt-in exporter, loopback-only HTTP, HTTPS for remote origins, no URL credentials, strict controlled attributes, canary-secret tests | Production collector authentication, backend access control, sampling, and retention policy are not implemented |
 
 Report suspected vulnerabilities privately to the repository owner. Do not include secrets, host logs, or real incident data in reports or fixtures.

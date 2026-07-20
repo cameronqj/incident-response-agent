@@ -8,11 +8,14 @@
 
 | Evidence | Command | Result | Scenario kind |
 | --- | --- | --- | --- |
-| Offline workflow, security, persistence, and concurrency | `.venv/bin/python -m pytest -m 'not integration and not live'` | 98 passed | `synthetic_marker` plus container-policy simulation |
-| Podman/Docker failure lab and remediation | `RUN_CONTAINER_TESTS=1 .venv/bin/python -m pytest -m 'integration and not live'` | 12 passed | `container_fault` and `synthetic_marker` |
+| Bootstrap, schema initialization, and offline suite | `./scripts/bootstrap.sh` | schema version 2; 112 passed | `synthetic_marker` plus container-policy simulation |
+| Offline workflow, security, persistence, concurrency, and in-memory OTel export | `.venv/bin/python -m pytest -m 'not integration and not live'` | 112 passed | `synthetic_marker` plus container-policy simulation |
+| Podman/Docker failure lab, remediation, and disposable OTLP collector | `RUN_CONTAINER_TESTS=1 .venv/bin/python -m pytest -m 'integration and not live'` | 13 passed | `container_fault` and `synthetic_marker` |
 | Generic inference plus real service recovery | `RUN_CONTAINER_TESTS=1 RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live` | 2 passed | live integration |
 
 The ENOSPC and OOM failure-lab checks are genuine bounded container faults, but they remain separate from the agent workflow. CPU, memory, disk-remediation, log-storm, and the original restarting-service agent scenarios use synthetic evidence or marker files. The new service lab is a real bounded agent cycle: the owned HTTP service returns 503 and reports OCI `unhealthy`; no restart occurs before exact approval; execution restarts the same container ID; its second boot returns 200 and reports `healthy`; cleanup verifies removal.
+
+The OpenTelemetry checks verify manual lifecycle spans, FastAPI server-span parenting, bounded metrics, exception-message suppression, normalized HTTP routes, and absence of bearer/API-key/path/private-IP/query/user-agent/host canaries from in-memory exports. The container test then sends traces and metrics to a digest-pinned, non-root, read-only disposable OpenTelemetry Collector and verifies receipt and cleanup. This is local export-path evidence, not evidence for a production backend, authentication, retention, dashboards, alerts, or sampling policy.
 
 ## Live-inference observation
 

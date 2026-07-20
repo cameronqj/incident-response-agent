@@ -20,9 +20,14 @@ This is not production incident response. It does not inspect or remediate host 
 Use a project virtual environment for every Python command:
 
 ```bash
-python3.12 -m venv .venv
-.venv/bin/python -m pip install -e '.[dev]'
+./scripts/bootstrap.sh
 .venv/bin/python -m incident_response_agent.cli demo
+```
+
+The bootstrap script creates `.venv`, installs only into that environment, creates or migrates `.data/incident-response.sqlite3`, and runs the offline suite. It does not create, copy, print, or modify `.env`. `SQLiteStore` also initializes and migrates the schema on normal startup, so no separate migration service is required for this POC. To initialize a different path without starting the API:
+
+```bash
+.venv/bin/python -m incident_response_agent.cli init-db --database-path .data/incident-response.sqlite3
 ```
 
 The CLI demo uses a process-owned temporary sandbox and deterministic fake model. It does not require a bearer token, container engine, network, or API key.
@@ -111,6 +116,27 @@ The combined real-model/real-service cycle is separately opt-in:
 RUN_CONTAINER_TESTS=1 RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live
 ```
 
+## Optional OpenTelemetry
+
+OpenTelemetry traces and metrics are disabled by default. SQLite audit history remains the durable source of truth. To export OTLP/HTTP to a local collector:
+
+```bash
+OTEL_ENABLED=1 \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
+OTEL_SERVICE_NAME=incident-response-agent \
+  .venv/bin/python -m incident_response_agent.cli serve
+```
+
+Manual spans cover event intake, telemetry collection, model analysis, proposal creation and decision, remediation execution/tool invocation, and expiration. Metrics cover event-to-proposal time, model latency/tokens/retries, approval wait, execution outcomes, and expirations. FastAPI request spans and standard HTTP metrics are also enabled.
+
+Exporter attributes are deliberately narrow: generated workflow IDs, proposal revision, scenario/kind, allowlisted action ID, decision, result, reason code, counts, and durations. Authorization headers, event bodies, prompts, evidence or model text, logs, paths, API keys, tokens, and arbitrary model output are not exported. An HTTP exporter may target loopback only; remote collectors require HTTPS. This POC does not configure a production collector, authentication, sampling policy, dashboards, alerts, or telemetry retention.
+
+The collector integration test uses a digest-pinned disposable OpenTelemetry Collector and remains opt-in with the other container evidence:
+
+```bash
+RUN_CONTAINER_TESTS=1 .venv/bin/python -m pytest tests/test_otel_collector_integration.py
+```
+
 ## Evidence level
 
-Offline tests provide deterministic evidence for schemas, authentication, sanitization, idempotency, approval gates, atomic claims, expiration, scenario/action-kind compatibility, sandbox validation, persistence, and audit behavior. Container tests provide separately labeled evidence for bounded faults and one real disposable-service restart. Live model behavior is variable integration evidence, not deterministic test evidence. See `docs/evidence.md` and `SECURITY.md`.
+Offline tests provide deterministic evidence for schemas, authentication, sanitization, idempotency, approval gates, atomic claims, expiration, scenario/action-kind compatibility, sandbox validation, persistence, audit behavior, and in-memory OpenTelemetry export. Container tests provide separately labeled evidence for bounded faults, one real disposable-service restart, and OTLP delivery to a disposable collector. Live model behavior is variable integration evidence, not deterministic test evidence. See `docs/evidence.md` and `SECURITY.md`.

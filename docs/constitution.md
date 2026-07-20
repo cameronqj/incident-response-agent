@@ -13,12 +13,14 @@ Build a small, inspectable incident-response agent that helps a human decide on 
 - Expiration is never approval; expired proposals are retained in SQLite and remain auditable.
 - HTTP mutations require POC bearer authentication or are disabled, and execution is opt-in.
 - Runtime remediation is confined to an internally created disposable container sandbox or an internally created and ownership-validated disposable service container.
+- External observability is opt-in and receives only controlled identifiers, enums, counts, and durations; SQLite remains the authoritative audit history.
 - Default tests are offline and deterministic.
 
 ## Engineering practices
 
 - Prefer small injected interfaces over framework-wide abstractions.
 - Use structured, validated records for workflow data and sanitized audit records.
+- Keep telemetry attributes on a strict allowlist; do not export event bodies, prompts, logs, paths, headers, credentials, or model text.
 - Pair deterministic fault injection with realistic container integration.
 - Label synthetic-marker and real-container evidence separately.
 - Bind action compatibility to both scenario and evidence kind so synthetic approval cannot authorize a real-container capability.
