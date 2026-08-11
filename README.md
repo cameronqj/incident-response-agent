@@ -42,6 +42,21 @@ flowchart LR
 
 The scenario-specific API and CLI paths are pre-triaged workflows. The separate Deep Agents path starts with only `site unhealthy`, uses the shortest useful sequence of read-only diagnostics, validates cited evidence and the proposed action deterministically, and then reuses the immutable proposal and execution machinery. The normal Deep Agents delegation and virtual-filesystem tools remain model-visible, while the state backend denies filesystem access and provides no shell execution capability.
 
+```mermaid
+flowchart LR
+    Alert["Generic alert: site unhealthy"] --> Agent["Deep Agent investigator"]
+    Agent --> Health["Check site health"]
+    Agent --> Resources["Inspect resources"]
+    Agent --> Logs["Inspect recent logs"]
+    Health --> Diagnosis["Structured diagnosis"]
+    Resources --> Diagnosis
+    Logs --> Diagnosis
+    Diagnosis --> Validation["Evidence and action validation"]
+    Validation --> Approval["Existing immutable proposal and approval"]
+    Approval --> Execution["Bounded execution and recovery verification"]
+    Permissions["No shell; virtual filesystem denied"] -. capability boundary .-> Agent
+```
+
 The incident workflow provides enough branching, latency, failure, approval, and side-effect behavior to make telemetry meaningful. SQLite records the sanitized durable history; OpenTelemetry supplies operational traces and metrics. Both are correlated without exporting event bodies, prompts, evidence text, credentials, paths, or arbitrary model output.
 
 ## Scope boundary
