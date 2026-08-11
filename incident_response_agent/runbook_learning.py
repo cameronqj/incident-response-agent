@@ -515,6 +515,28 @@ class RunbookRegistry:
                 ))
         return matches
 
+    def get_promoted(self, runbook_id: str, version: int) -> PromotedRunbook:
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT * FROM promoted_runbooks WHERE runbook_id = ? AND version = ?",
+                (runbook_id, version),
+            ).fetchone()
+        if row is None:
+            raise KeyError("promoted runbook not found")
+        proposal = RunbookResearchProposal.model_validate_json(row["proposal_json"])
+        if proposal_digest(proposal) != row["content_digest"]:
+            raise ValueError("stored promoted runbook digest is invalid")
+        return PromotedRunbook(
+            runbook_id=row["runbook_id"],
+            version=row["version"],
+            proposal=proposal,
+            source_candidate_id=row["source_candidate_id"],
+            content_digest=row["content_digest"],
+            promoted_at=datetime.fromisoformat(row["promoted_at"]),
+            promoted_by=row["promoted_by"],
+            evaluation=RunbookPromotionEvaluation.model_validate_json(row["evaluation_json"]),
+        )
+
 
 def simulated_reviewer_revision(proposal: RunbookResearchProposal) -> RunbookResearchProposal:
     """POC-only reviewer edit; production review remains an external human decision."""

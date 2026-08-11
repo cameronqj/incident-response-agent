@@ -246,6 +246,8 @@ def main() -> None:
     runbook_parser = subparsers.add_parser("runbook-learning-demo", help="research and evaluate one runbook with a simulated application reviewer")
     runbook_parser.add_argument("--database-path", default=".data/runbook-learning.sqlite3")
     runbook_parser.add_argument("--simulate-review", choices=["approve", "reject", "revise-approve"], default="revise-approve")
+    runbook_eval_parser = subparsers.add_parser("runbook-application-eval", help="compare a fresh incident before and after governed runbook promotion")
+    runbook_eval_parser.add_argument("--no-upload", action="store_true", help="run without retaining LangSmith experiment results")
     init_parser = subparsers.add_parser("init-db", help="create or migrate the SQLite database")
     init_parser.add_argument("--database-path", default=None)
     serve_parser = subparsers.add_parser("serve", help="run the FastAPI service")
@@ -279,6 +281,12 @@ def main() -> None:
         return
     if args.command == "runbook-learning-demo":
         runbook_learning_demo(args.database_path, args.simulate_review)
+        return
+    if args.command == "runbook-application-eval":
+        from .runbook_application_eval import run_runbook_application_evaluation
+
+        result = run_runbook_application_evaluation(Settings.from_env(), upload_results=not args.no_upload)
+        print(json.dumps(result, default=str, indent=2))
         return
     if args.command == "init-db":
         database_path = args.database_path or Settings.from_env().database_path
