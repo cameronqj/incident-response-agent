@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from threading import Lock
 from typing import Callable, Literal, Protocol
 
 from deepagents import FilesystemPermission, create_deep_agent
@@ -11,6 +12,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.config import get_config
 from pydantic import BaseModel, ConfigDict, Field
 
 from .audit import sanitize_text
@@ -55,8 +57,6 @@ class InvestigationResult(BaseModel):
 class SiteDiagnosticTarget(Protocol):
     def check_health(self) -> DiagnosticObservation: ...
     def inspect_resources(self) -> DiagnosticObservation: ...
-    def inspect_services(self) -> DiagnosticObservation: ...
-    def inspect_processes(self) -> DiagnosticObservation: ...
     def inspect_recent_logs(self) -> DiagnosticObservation: ...
 
 
@@ -89,12 +89,6 @@ class DisposableSiteLab:
         unhealthy = any(self.sandbox.resolve_child("logs").glob("*.rotated"))
         return DiagnosticObservation(evidence_id="resources-1", category="resources", summary="Filesystem capacity is critically low while CPU and memory remain normal." if unhealthy else "Filesystem capacity, CPU, and memory are normal.", signals=["low_free_space"] if unhealthy else ["resources_normal"], measurements={"free_bytes": 4096 if unhealthy else 1_048_576, "cpu_percent": 12.0, "memory_percent": 38.0})
 
-    def inspect_services(self) -> DiagnosticObservation:
-        return DiagnosticObservation(evidence_id="services-1", category="services", summary="The application service is running but unhealthy and has not restarted.", signals=["service_unhealthy"], measurements={"service_state": "running", "restart_count": 0})
-
-    def inspect_processes(self) -> DiagnosticObservation:
-        return DiagnosticObservation(evidence_id="processes-1", category="processes", summary="No runaway or memory-intensive process is present.", signals=["processes_normal"], measurements={"runaway_process_detected": False, "oom_kill_detected": False})
-
     def inspect_recent_logs(self) -> DiagnosticObservation:
         return DiagnosticObservation(evidence_id="logs-1", category="logs", summary="Recent bounded logs report that normal rotation failed after the filesystem ran out of space.", signals=["rotation_error", "no_space_left"], measurements={"affected_file_count": 3, "log_growth_bytes_per_minute": 262_144})
 
@@ -114,14 +108,32 @@ class DisposableSiteLab:
 
 
 @dataclass
-class InvestigationTrace:
+class InvestigationTraceRun:
     observations: dict[str, DiagnosticObservation] = field(default_factory=dict)
     tool_calls: list[str] = field(default_factory=list)
 
-    def record(self, tool_name: str, observation: DiagnosticObservation) -> str:
-        self.tool_calls.append(tool_name)
-        self.observations[observation.evidence_id] = observation
+
+@dataclass
+class InvestigationTrace:
+    """Thread-keyed diagnostic history shared safely by the compiled Studio graph."""
+
+    _runs: dict[str, InvestigationTraceRun] = field(default_factory=dict, repr=False)
+    _lock: Lock = field(default_factory=Lock, repr=False)
+
+    def record(self, thread_id: str, tool_name: str, observation: DiagnosticObservation) -> str:
+        with self._lock:
+            run = self._runs.setdefault(thread_id, InvestigationTraceRun())
+            run.tool_calls.append(tool_name)
+            run.observations[observation.evidence_id] = observation
         return observation.model_dump_json()
+
+    def observations_for(self, thread_id: str) -> dict[str, DiagnosticObservation]:
+        with self._lock:
+            return dict(self._runs.get(thread_id, InvestigationTraceRun()).observations)
+
+    def tool_calls_for(self, thread_id: str) -> list[str]:
+        with self._lock:
+            return list(self._runs.get(thread_id, InvestigationTraceRun()).tool_calls)
 
 
 def build_diagnostic_tools(target: SiteDiagnosticTarget, trace: InvestigationTrace, observability: NoopObservability | OpenTelemetryObservability | None = None) -> list[StructuredTool]:
@@ -134,8 +146,9 @@ def build_diagnostic_tools(target: SiteDiagnosticTarget, trace: InvestigationTra
     ):
         def make_invoke(op: Callable[[], DiagnosticObservation], tool_name: str) -> Callable[[], str]:
             def invoke() -> str:
+                thread_id = str(get_config().get("configurable", {}).get("thread_id", "unscoped"))
                 with observability.span("incident.agent.tool", {"incident.tool": tool_name}):
-                    return trace.record(tool_name, op())
+                    return trace.record(thread_id, tool_name, op())
 
             return invoke
 
@@ -148,13 +161,13 @@ SYSTEM_PROMPT = """You investigate one owned disposable site. Use the smallest u
 
 RESOURCE_SUBAGENT = {
     "name": "resource-investigator",
-    "description": "Analyze resource and process observations when the cause may be CPU, memory, or storage pressure.",
+    "description": "Analyze resource observations when the cause may be CPU, memory, or storage pressure.",
     "system_prompt": "Use only the available read-only diagnostic tools. Return a short evidence-based conclusion and cite evidence IDs.",
 }
 
 SERVICE_SUBAGENT = {
     "name": "service-log-investigator",
-    "description": "Analyze site health, service state, and recent bounded logs.",
+    "description": "Analyze site health and recent bounded logs.",
     "system_prompt": "Use only the available read-only diagnostic tools. Return a short evidence-based conclusion and cite evidence IDs.",
 }
 
@@ -207,15 +220,17 @@ def investigate_site(agent, alert: SiteHealthAlert, trace: InvestigationTrace, o
             config={"configurable": {"thread_id": alert.idempotency_key}, "recursion_limit": 16},
         )
         result = InvestigationResult.model_validate(output["structured_response"])
-        missing = sorted(set(result.evidence_refs) - set(trace.observations))
+        observations = trace.observations_for(alert.idempotency_key)
+        tool_calls = trace.tool_calls_for(alert.idempotency_key)
+        missing = sorted(set(result.evidence_refs) - set(observations))
         if missing:
             raise ValueError("diagnosis cited evidence that was not observed")
         if result.proposed_action_id not in allowed_actions(result.diagnosed_scenario, ScenarioKind.SYNTHETIC_MARKER):
             raise ValueError("diagnosis proposed an action outside deterministic policy")
-        span.set_attribute("incident.diagnostic_tool_count", len(trace.tool_calls))
+        span.set_attribute("incident.diagnostic_tool_count", len(tool_calls))
         duration_ms = int((time.monotonic() - started) * 1000)
         span.set_attribute("incident.investigation_duration_ms", duration_ms)
-        observability.record_investigation(duration_ms, len(trace.tool_calls), "diagnosed")
+        observability.record_investigation(duration_ms, len(tool_calls), "diagnosed")
         return result
 
 

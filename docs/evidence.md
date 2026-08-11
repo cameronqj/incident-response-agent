@@ -65,8 +65,4 @@ The container-marked check runs the approved cleanup through the existing harden
 - Provider configuration: `enable_thinking=false`; retain Deep Agents' native tool binding
 - Observed variability: Qwen thinking mode rejected required tool choice; non-thinking mode completed with `check_site_health`, `inspect_recent_logs`, and `inspect_resources` and returned the expected diagnosis.
 
-The captured Studio view below shows the compiled Deep Agents graph and the successful live Qwen trace, including the `check_site_health`, `inspect_resources`, and `inspect_recent_logs` calls. It is presentation evidence for the verified run above, not a substitute for the reproducible tests or deterministic result validation.
-
-![LangSmith Studio graph and live site investigation trace](assets/langsmith-studio-site-investigation.png)
-
 This proves one successful live Deep Agents investigation against the configured endpoint and the complete existing live regression. It does not prove deterministic diagnosis, general provider compatibility, safe arbitrary shell access, production-host inspection, or autonomous remediation.

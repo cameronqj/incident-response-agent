@@ -146,10 +146,11 @@ def site_unhealthy_demo() -> None:
             ),
             actor="deep-agent-investigator",
         )
-        service.record_diagnostic_tools(run.run_id, trace.tool_calls, "deep-agent-investigator")
+        tool_calls = trace.tool_calls_for(alert.idempotency_key)
+        service.record_diagnostic_tools(run.run_id, tool_calls, "deep-agent-investigator")
         assert run.proposal is not None
         proposal = run.proposal
-        print(json.dumps({"phase": "investigated", "diagnosis": result.model_dump(mode="json"), "tool_calls": trace.tool_calls, "proposal": proposal.model_dump(mode="json")}, indent=2))
+        print(json.dumps({"phase": "investigated", "diagnosis": result.model_dump(mode="json"), "tool_calls": tool_calls, "proposal": proposal.model_dump(mode="json")}, indent=2))
         response = input("Type approve to execute this exact bounded proposal: ").strip().lower()
         decision = Decision.APPROVE if response == "approve" else Decision.REJECT
         service.decide(proposal.proposal_id, DecisionRequest(decision=decision, revision=proposal.revision, action_hash=proposal.action_hash), actor="site-unhealthy-demo")

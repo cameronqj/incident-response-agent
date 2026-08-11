@@ -94,6 +94,22 @@ def test_diagnostics_expose_symptoms_not_hidden_ground_truth(tmp_path):
         sandbox.close()
 
 
+def test_diagnostic_trace_is_isolated_by_langgraph_thread(tmp_path):
+    sandbox, lab = build_lab(tmp_path)
+    try:
+        trace = InvestigationTrace()
+        tools = build_diagnostic_tools(lab, trace)
+        tools[0].invoke({}, config={"configurable": {"thread_id": "thread-a"}})
+        tools[1].invoke({}, config={"configurable": {"thread_id": "thread-b"}})
+
+        assert trace.tool_calls_for("thread-a") == ["check_site_health"]
+        assert set(trace.observations_for("thread-a")) == {"health-1"}
+        assert trace.tool_calls_for("thread-b") == ["inspect_resources"]
+        assert set(trace.observations_for("thread-b")) == {"resources-1"}
+    finally:
+        sandbox.close()
+
+
 def test_live_model_factory_uses_qwen_non_thinking_mode_and_masks_key(monkeypatch):
     from incident_response_agent.config import Settings
     from incident_response_agent.site_investigation import create_live_investigation_model
@@ -113,7 +129,7 @@ def test_deep_agent_uses_bounded_tools_and_returns_validated_diagnosis(tmp_path)
         agent = create_incident_deep_agent(model, lab, trace)
         result = investigate_site(agent, SiteHealthAlert(idempotency_key="site-1", observed_at=datetime.now(timezone.utc)), trace)
         assert result.diagnosed_scenario.value == "disk-exhaustion"
-        assert trace.tool_calls == ["inspect_resources", "inspect_recent_logs"]
+        assert trace.tool_calls_for("site-1") == ["inspect_resources", "inspect_recent_logs"]
         assert "task" in model.bound_tool_names
         assert "execute" not in model.bound_tool_names
         assert "read_file" in model.bound_tool_names
@@ -159,7 +175,7 @@ def test_investigation_hands_off_to_existing_approval_and_recovers(tmp_path):
         }))
         assert run.proposal is not None
         proposal = run.proposal
-        service.record_diagnostic_tools(run.run_id, trace.tool_calls, "deep-agent-investigator")
+        service.record_diagnostic_tools(run.run_id, trace.tool_calls_for("site-3"), "deep-agent-investigator")
         service.decide(proposal.proposal_id, DecisionRequest(decision=Decision.APPROVE, revision=proposal.revision, action_hash=proposal.action_hash))
         completed = service.execute(proposal.proposal_id)
         service.record_recovery_verification(completed.run_id, proposal.proposal_id, True, "test")
@@ -255,6 +271,6 @@ def test_live_deep_agent_tool_call_compatibility(tmp_path):
             trace,
         )
         assert result.diagnosed_scenario.value == "disk-exhaustion"
-        assert trace.tool_calls
+        assert trace.tool_calls_for("live-site")
     finally:
         sandbox.close()

@@ -80,7 +80,7 @@ class IncidentService:
         run = self.store.get_run(run_id)
         if not run:
             raise NotFoundError("run not found")
-        allowed = {"check_site_health", "inspect_resources", "inspect_services", "inspect_processes", "inspect_recent_logs"}
+        allowed = {"check_site_health", "inspect_resources", "inspect_recent_logs"}
         for tool_name in tool_names:
             if tool_name not in allowed:
                 raise ValueError("unknown diagnostic tool")
