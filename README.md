@@ -111,7 +111,7 @@ To exercise Deep Agents against an ambiguous synthetic site failure, use the loc
 
 The command privately injects disk pressure and failed normal log rotation, but the agent receives only a generic health-check failure. It may inspect bounded site health, resources, recent changes, and sanitized recent-log signals. Deep Agents' delegation and virtual-filesystem tools remain model-visible, but deny-by-default permissions block filesystem paths and the state backend provides no shell execution capability. After investigation, the command displays the immutable proposal and waits for `approve`. `OPENCODE_KEY` is loaded from the gitignored local `.env` when present; its value is never printed or persisted.
 
-For the second causal-reasoning experiment, run:
+For the second multi-signal investigation experiment, run:
 
 ```bash
 .venv/bin/python -m incident_response_agent.cli site-causal-demo

@@ -44,15 +44,14 @@ This proves configured OpenAI-compatible assessment in both the disk flow and a 
 
 | Evidence | Command | Result | Scenario kind |
 | --- | --- | --- | --- |
-| Targeted offline Deep Agents trajectory, causal discrimination, policy, permissions, approval, recovery, and OTel checks | `.venv/bin/python -m pytest tests/test_site_investigation.py -m 'not integration and not live'` | 9 passed; 3 deselected | `synthetic_marker` |
-| Full offline regression | `.venv/bin/python -m pytest -m 'not integration and not live'` | 123 passed; 18 deselected | `synthetic_marker` plus container-policy simulation |
+| Targeted offline Deep Agents trajectory, policy, permissions, audit, recovery, and OTel checks | `.venv/bin/python -m pytest tests/test_site_investigation.py -m 'not integration and not live'` | 6 passed | `synthetic_marker` |
+| Full offline regression | `.venv/bin/python -m pytest -m 'not integration and not live'` | 120 passed; 17 deselected | `synthetic_marker` plus container-policy simulation |
 | Targeted approved Deep Agent cleanup through the hardened container executor | `RUN_CONTAINER_TESTS=1 .venv/bin/python -m pytest tests/test_site_investigation.py -m integration` | 1 passed | `synthetic_marker` with containerized execution |
-| Full container regression | `RUN_CONTAINER_TESTS=1 .venv/bin/python -m pytest -m 'integration and not live'` | 14 passed | `container_fault` and `synthetic_marker` |
-| Targeted live baseline and causal Deep Agents investigations | `RUN_LIVE_TESTS=1 .venv/bin/python -m pytest tests/test_site_investigation.py -m live` | 2 passed; 10 deselected | live inference over `synthetic_marker` evidence |
+| Full container regression | `RUN_CONTAINER_TESTS=1 .venv/bin/python -m pytest -m 'integration and not live'` | 14 passed; 123 deselected | `container_fault` and `synthetic_marker` |
+| Targeted live Deep Agents tool-calling investigation | `RUN_LIVE_TESTS=1 .venv/bin/python -m pytest tests/test_site_investigation.py -m live` | 1 passed | live inference over `synthetic_marker` evidence |
+| Full live regression | `RUN_CONTAINER_TESTS=1 RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live` | 3 passed; 134 deselected | live integration |
 
 The offline checks use a scripted tool-calling chat model through the real `create_deep_agent` harness. They verify bounded diagnostic tools, absence of the hidden scenario in observations, observed-evidence citation enforcement, deterministic action compatibility, no shell exposure, handoff to hash-bound approval, recovery verification, and content-free OTel attributes. This proves harness integration and deterministic trajectory behavior, not live-model reliability or real-host diagnosis.
-
-The causal profile adds elevated CPU and a recent successful deployment without changing the hidden disk-exhaustion ground truth or allowlisted action. Its deterministic test verifies that all three competing evidence sources were observed, execution failed before approval, the sandbox remained unhealthy, exact hash-bound approval enabled only the existing cleanup, and the post-execution health check returned HTTP 200. The live Qwen check completed the same resource/change/log investigation and returned `disk-exhaustion` with `cleanup_rotated_logs`. This is one controlled causal-discrimination example, not general causal-reasoning evidence.
 
 The container-marked check runs the approved cleanup through the existing hardened container executor and verifies recovery. A native `qwen3.6-plus` probe confirmed that thinking mode also rejects forced tool choice at this endpoint; using Qwen's non-thinking request setting accepts Deep Agents' normal structured tool choice without a custom binding adapter. The state backend and permissions still deny filesystem access and expose no shell. The fixture provides one clear chain—disk pressure followed by failed rotation—so a useful investigation can stop after a small evidence set.
 
@@ -71,3 +70,15 @@ The captured Studio view below shows the compiled baseline Deep Agents graph and
 ![LangSmith Studio graph and live site investigation trace](assets/langsmith-studio-site-investigation.png)
 
 This proves one successful live Deep Agents investigation against the configured endpoint and the complete existing live regression. It does not prove deterministic diagnosis, general provider compatibility, safe arbitrary shell access, production-host inspection, or autonomous remediation.
+
+## 2026-08-11 multi-signal investigation supplement
+
+The second profile preserves the hidden disk-exhaustion ground truth and existing `cleanup_rotated_logs` action while adding elevated CPU and a recent successful deployment as distractors.
+
+| Evidence | Command | Result | Scenario kind |
+| --- | --- | --- | --- |
+| Targeted offline Deep Agents baseline and multi-signal checks | `.venv/bin/python -m pytest tests/test_site_investigation.py -m 'not integration and not live'` | 9 passed; 3 deselected | `synthetic_marker` |
+| Full offline regression | `.venv/bin/python -m pytest -m 'not integration and not live'` | 123 passed; 18 deselected | `synthetic_marker` plus container-policy simulation |
+| Targeted live baseline and multi-signal investigations | `RUN_LIVE_TESTS=1 .venv/bin/python -m pytest tests/test_site_investigation.py -m live` | 2 passed; 10 deselected | live inference over `synthetic_marker` evidence |
+
+The deterministic test verifies that the resource, recent-change, and log observations were gathered, execution failed before approval, the sandbox remained unhealthy, exact hash-bound approval enabled only the existing cleanup, and post-execution health returned HTTP 200. The live Qwen check completed the same three-source investigation and returned `disk-exhaustion` with `cleanup_rotated_logs`. This is one controlled multi-signal discrimination example, not general causal-reasoning evidence or a production incident simulation.
