@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import inspect
 import json
+from types import SimpleNamespace
 from typing import Any, Sequence
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -9,19 +11,23 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 
 from incident_response_agent.reflection_eval import (
     EVALUATION_CASES,
+    CritiqueAssessment,
     CritiqueResult,
+    EvidenceAssessment,
     EvaluationTarget,
     action_correct,
+    critique_result_from_assessment,
     diagnosis_correct,
     distractor_rejection,
     evidence_precision,
     reference_output,
     run_direct_case,
     run_reflective_case,
+    summarize_experiment,
     trajectory_coverage,
     within_tool_budget,
 )
-from incident_response_agent.site_investigation import InvestigationTrace, build_diagnostic_tools
+from incident_response_agent.site_investigation import InvestigationResult, InvestigationTrace, build_diagnostic_tools
 
 
 class ScriptedEvalModel(BaseChatModel):
@@ -121,6 +127,8 @@ def test_reflection_runs_exactly_one_critique_and_removes_distractor():
     assert critic.calls == 1
     assert reviser.calls == 1
     assert output["critique_used"] is True
+    assert output["revision_applied"] is True
+    assert output["initial_evidence_refs"] == ["resources-1", "changes-1", "logs-1"]
     assert output["evidence_refs"] == ["resources-1", "logs-1"]
     assert output["tool_calls"] == ["inspect_resources", "inspect_recent_changes", "inspect_recent_logs"]
 
@@ -146,3 +154,58 @@ def test_deterministic_evaluators_score_correctness_evidence_and_trajectory():
     assert within_tool_budget({}, good, reference)
     assert not diagnosis_correct({}, wrong, reference)
     assert not action_correct({}, wrong, reference)
+    assert not diagnosis_correct({}, {}, reference)
+    assert not action_correct({}, {}, reference)
+    assert evidence_precision({}, {}, reference) == 0.0
+    assert not distractor_rejection({}, {}, reference)
+    assert trajectory_coverage({}, {}, reference) == 0.0
+    assert not within_tool_budget({}, {}, reference)
+
+
+def test_evaluator_signatures_match_langsmith_supported_parameter_names():
+    evaluators = [diagnosis_correct, action_correct, evidence_precision, distractor_rejection, trajectory_coverage, within_tool_budget]
+    for evaluator in evaluators:
+        assert list(inspect.signature(evaluator).parameters) == ["inputs", "outputs", "reference_outputs"]
+
+
+def test_incomplete_critic_classification_conservatively_retains_unclassified_evidence():
+    result = _result(["health-1", "resources-1", "changes-1"]).tool_calls[0]["args"]
+    critique = critique_result_from_assessment(
+        InvestigationResult.model_validate(result),
+        CritiqueAssessment(
+            evidence_assessments=[
+                EvidenceAssessment(evidence_id="changes-1", supports_causal_explanation=False),
+                EvidenceAssessment(evidence_id="uncited-1", supports_causal_explanation=False),
+            ],
+            explanation="The cited change only rules out an alternative.",
+        ),
+    )
+    assert critique.needs_revision
+    assert critique.unsupported_evidence_refs == ["changes-1"]
+
+
+def test_experiment_summary_counts_failed_and_missing_scores_as_zero():
+    class Results(list):
+        experiment_name = "test-experiment"
+        experiment_id = "test-id"
+        url = "https://example.invalid"
+
+    rows = Results([
+        {
+            "run": SimpleNamespace(outputs={"diagnosed_scenario": "disk-exhaustion"}, error=None),
+            "example": SimpleNamespace(inputs={"case_id": "good"}),
+            "evaluation_results": {"results": [SimpleNamespace(key="diagnosis_correct", score=True)]},
+        },
+        {
+            "run": SimpleNamespace(outputs=None, error="provider timeout"),
+            "example": SimpleNamespace(inputs={"case_id": "failed"}),
+            "evaluation_results": {"results": []},
+        },
+    ])
+    summary = summarize_experiment(rows)
+    assert summary["case_count"] == 2
+    assert summary["successful_case_count"] == 1
+    assert summary["error_case_count"] == 1
+    assert summary["averages"]["diagnosis_correct"] == 0.5
+    assert summary["averages"]["action_correct"] == 0.0
+    assert summary["metric_denominators"]["diagnosis_correct"] == 2

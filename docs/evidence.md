@@ -86,3 +86,17 @@ The deterministic tests verify that the resource, recent-change, and log observa
 The Studio capture below complements the baseline tool-trace image above. It shows the parent workflow after resume: the immutable proposal stage, recorded human `approve` decision, successful bounded execution, and recovery-verification node. The visible run ID is generated workflow metadata; the capture excludes account details, credentials, local paths, and persistent thread identifiers.
 
 ![LangSmith Studio causal workflow with human approval and recovery](assets/langsmith-studio-causal-approval-recovery.png)
+
+## 2026-08-11 LangSmith reflection evaluation
+
+The discrete `reflection-eval` harness used the versioned `incident-response-agent-reflection-eval-v1` dataset (ID `92d8421f-7ca3-4b71-a72a-4c7c65211aa3`) with five synthetic hidden-ground-truth cases and one repetition per target. The generic alert and diagnostic observations contain no expected scenario, action, or causal/distractor labels.
+
+| Experiment | ID | Completed cases | Diagnosis | Action | Evidence precision | Distractor rejection | Tool coverage | Within budget |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Direct baseline `direct-investigator-v1-2f0cd939` | `9f594c90-5637-461f-b786-2424ed31be15` | 5/5 | 1.00 | 1.00 | 0.75 | 0.40 | 1.00 | 1.00 |
+| First critique `critique-investigator-v1-0dade9fd` | `4a530137-5a52-47c3-8e01-4ae4b9b42f5f` | 5/5 | 1.00 | 1.00 | 0.75 | 0.40 | 1.00 | 1.00 |
+| Refined critique `critique-investigator-v4-579fb91c` | `54d77e7d-0fb4-4887-bb45-f28e169eedd9` | 5/5 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+
+The first critique produced no measurable change. Inspection showed that its rubric accepted observations used only to rule out alternatives. The refined version requests a per-citation causal classification and derives the revision decision in code. A partial v2 run scored four cases successfully but failed one incomplete structured classification; a later attempt exposed provider calls exceeding the normal 30-second interactive timeout. The final v4 experiment conservatively retains missing classifications and uses an evaluation-only 120-second request timeout. It completed in approximately 14 minutes.
+
+In this one-run comparison, the reflective configuration scored 0.25 higher on evidence precision and 0.60 higher on distractor rejection without a difference in diagnosis, action, trajectory coverage, or tool-budget scores. Because the direct and reflective targets are separate stochastic investigations and v4 did not retain its pre-critique citations, this result does not isolate the critique as the cause of the difference. Subsequent runs record initial and final citations plus whether revision was applied for same-run inspection. This is not evidence of statistical significance, an official AIOps benchmark, production incident performance, autonomous prompt improvement, or lower latency/cost. Reproduce with `.venv/bin/python -m incident_response_agent.cli reflection-eval --mode both --repetitions 1`; live model output and duration may vary.

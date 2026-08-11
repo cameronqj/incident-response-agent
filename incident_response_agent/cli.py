@@ -187,6 +187,7 @@ def main() -> None:
     subparsers.add_parser("site-causal-demo", help="use Deep Agents to distinguish causal evidence from concurrent signals")
     reflection_parser = subparsers.add_parser("reflection-eval", help="compare direct and one-critique investigators on five synthetic cases")
     reflection_parser.add_argument("--repetitions", type=int, default=1)
+    reflection_parser.add_argument("--mode", choices=["direct", "reflective", "both"], default="both")
     reflection_parser.add_argument("--no-upload", action="store_true", help="run without retaining LangSmith experiment results")
     init_parser = subparsers.add_parser("init-db", help="create or migrate the SQLite database")
     init_parser.add_argument("--database-path", default=None)
@@ -215,6 +216,7 @@ def main() -> None:
             Settings.from_env(),
             upload_results=not args.no_upload,
             repetitions=args.repetitions,
+            mode=args.mode,
         )
         print(json.dumps(result, default=str, indent=2))
         return

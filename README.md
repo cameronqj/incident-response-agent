@@ -119,6 +119,14 @@ For the second multi-signal investigation experiment, run:
 
 This profile adds elevated CPU and a recent successful deployment alongside the disk-pressure evidence. The agent must distinguish concurrent and merely recent signals from the ENOSPC log-rotation chain, then hand the same validated `cleanup_rotated_logs` proposal to the existing hash-bound approval and recovery workflow. It adds no model-visible remediation or shell capability.
 
+To compare a direct investigation with one bounded critique-and-revision cycle across five hidden-ground-truth cases, run:
+
+```bash
+.venv/bin/python -m incident_response_agent.cli reflection-eval --mode both --repetitions 1
+```
+
+The harness creates or reuses the versioned `incident-response-agent-reflection-eval-v1` LangSmith dataset and uploads two experiments. `--mode direct` or `--mode reflective` runs one side independently; `--no-upload` uses the same local cases and evaluators without retaining an experiment. The cases cover disk, CPU, memory, service-restart, and log-storm diagnoses with plausible distractors. LangSmith applies deterministic evaluators for diagnosis, action, causal-evidence precision, distractor rejection, required-tool coverage, and tool budget. The critique receives only observations already gathered by the agent and can trigger at most one tool-less revision; it cannot inspect hidden reference outputs or make additional diagnostic calls. See ADR 007 and `docs/evidence.md` for the measured one-run result and its limits.
+
 For a real disposable-service recovery cycle, use a bearer token and a working Podman/Docker engine. The command displays the immutable proposal and waits for `approve` before restarting anything:
 
 ```bash
