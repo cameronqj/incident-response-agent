@@ -92,7 +92,7 @@ To exercise Deep Agents against an ambiguous synthetic site failure, use the loc
 .venv/bin/python -m incident_response_agent.cli site-unhealthy-demo
 ```
 
-The command privately injects failed log rotation and disk pressure, but the agent receives only a generic health-check failure. It may inspect bounded health, resources, services, processes, and sanitized log signals. Generic filesystem and shell tools are removed at the model boundary, so the agent has no host filesystem, arbitrary path, target-selection, or remediation capability. After investigation, the command displays the immutable proposal and waits for `approve`. `OPENCODE_KEY` is loaded from the gitignored local `.env` when present; its value is never printed or persisted.
+The command privately injects disk pressure and failed normal log rotation, but the agent receives only a generic health-check failure. It may inspect bounded site health, resources, and sanitized recent-log signals. Deep Agents' delegation and virtual-filesystem tools remain model-visible, but deny-by-default permissions block filesystem paths and the state backend provides no shell execution capability. After investigation, the command displays the immutable proposal and waits for `approve`. `OPENCODE_KEY` is loaded from the gitignored local `.env` when present; its value is never printed or persisted.
 
 For a real disposable-service recovery cycle, use a bearer token and a working Podman/Docker engine. The command displays the immutable proposal and waits for `approve` before restarting anything:
 
