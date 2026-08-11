@@ -366,3 +366,26 @@ def test_live_deep_agent_tool_call_compatibility(tmp_path):
         assert trace.tool_calls_for("live-site")
     finally:
         sandbox.close()
+
+
+@pytest.mark.live
+def test_live_deep_agent_causal_investigation(tmp_path):
+    from incident_response_agent.config import Settings
+    from incident_response_agent.site_investigation import create_live_investigation_model
+
+    if os.getenv("RUN_LIVE_TESTS") != "1":
+        pytest.skip("set RUN_LIVE_TESTS=1 to call the configured live model")
+    sandbox, lab = build_causal_lab(tmp_path)
+    try:
+        settings = Settings.from_env()
+        trace = InvestigationTrace()
+        result = investigate_site(
+            create_incident_deep_agent(create_live_investigation_model(settings), lab, trace),
+            SiteHealthAlert(idempotency_key="live-causal-site", observed_at=datetime.now(timezone.utc)),
+            trace,
+        )
+        assert result.diagnosed_scenario.value == "disk-exhaustion"
+        assert result.proposed_action_id == "cleanup_rotated_logs"
+        assert {"inspect_resources", "inspect_recent_changes", "inspect_recent_logs"} <= set(trace.tool_calls_for("live-causal-site"))
+    finally:
+        sandbox.close()

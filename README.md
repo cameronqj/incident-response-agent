@@ -47,9 +47,11 @@ flowchart LR
     Alert["Generic alert: site unhealthy"] --> Agent["Deep Agent investigator"]
     Agent --> Health["Check site health"]
     Agent --> Resources["Inspect resources"]
+    Agent --> Changes["Inspect recent changes"]
     Agent --> Logs["Inspect recent logs"]
     Health --> Diagnosis["Structured diagnosis"]
     Resources --> Diagnosis
+    Changes --> Diagnosis
     Logs --> Diagnosis
     Diagnosis --> Validation["Evidence and action validation"]
     Validation --> Approval["Existing immutable proposal and approval"]
@@ -107,7 +109,15 @@ To exercise Deep Agents against an ambiguous synthetic site failure, use the loc
 .venv/bin/python -m incident_response_agent.cli site-unhealthy-demo
 ```
 
-The command privately injects disk pressure and failed normal log rotation, but the agent receives only a generic health-check failure. It may inspect bounded site health, resources, and sanitized recent-log signals. Deep Agents' delegation and virtual-filesystem tools remain model-visible, but deny-by-default permissions block filesystem paths and the state backend provides no shell execution capability. After investigation, the command displays the immutable proposal and waits for `approve`. `OPENCODE_KEY` is loaded from the gitignored local `.env` when present; its value is never printed or persisted.
+The command privately injects disk pressure and failed normal log rotation, but the agent receives only a generic health-check failure. It may inspect bounded site health, resources, recent changes, and sanitized recent-log signals. Deep Agents' delegation and virtual-filesystem tools remain model-visible, but deny-by-default permissions block filesystem paths and the state backend provides no shell execution capability. After investigation, the command displays the immutable proposal and waits for `approve`. `OPENCODE_KEY` is loaded from the gitignored local `.env` when present; its value is never printed or persisted.
+
+For the second causal-reasoning experiment, run:
+
+```bash
+.venv/bin/python -m incident_response_agent.cli site-causal-demo
+```
+
+This profile adds elevated CPU and a recent successful deployment alongside the disk-pressure evidence. The agent must distinguish concurrent and merely recent signals from the ENOSPC log-rotation chain, then hand the same validated `cleanup_rotated_logs` proposal to the existing hash-bound approval and recovery workflow. It adds no model-visible remediation or shell capability.
 
 For a real disposable-service recovery cycle, use a bearer token and a working Podman/Docker engine. The command displays the immutable proposal and waits for `approve` before restarting anything:
 
@@ -197,7 +207,7 @@ The Deep Agents path uses the same configurable endpoint and key through `langch
 
 ### Local LangSmith Studio
 
-The repository exports the synthetic site investigator through `langgraph.json` for interactive graph and tool-call visualization. Studio can connect directly to the local Agent Server without a LangSmith credential or hosted trace retention:
+The repository exports both the baseline `site-investigator` and the multi-signal `site-investigator-causal` through `langgraph.json` for interactive graph and tool-call visualization. Studio can connect directly to the local Agent Server without a LangSmith credential or hosted trace retention:
 
 ```bash
 ./scripts/studio.sh
