@@ -207,13 +207,15 @@ The Deep Agents path uses the same configurable endpoint and key through `langch
 
 ### Local LangSmith Studio
 
-The repository exports both the baseline `site-investigator` and the multi-signal `site-investigator-causal` through `langgraph.json` for interactive graph and tool-call visualization. Studio can connect directly to the local Agent Server without a LangSmith credential or hosted trace retention:
+The repository exports both the baseline `site-investigator` and the full multi-signal `site-investigator-causal` workflow through `langgraph.json`. The causal graph shows investigation, immutable proposal construction, a LangGraph human-approval interrupt, deterministic execution, and recovery verification in one resumable Studio thread. Studio can connect directly to the local Agent Server without a LangSmith credential or hosted trace retention:
 
 ```bash
 ./scripts/studio.sh
 ```
 
 Open the Studio URL printed by the command and submit: `The owned disposable site has failed its health check. Investigate the cause and propose one bounded remediation.` The graph still calls the configured external inference endpoint, so `OPENCODE_KEY` is required; only LangSmith authentication and hosted tracing are disabled. The exported graph uses a process-owned synthetic sandbox and exposes no remediation or shell tool.
+
+For `site-investigator-causal`, Studio pauses at `human_approval` with the exact proposal ID, revision, action hash, impact, risk, and preview. Resume with `approve` or `reject`; approval must echo those immutable identifiers before the existing application service can execute. Each Studio thread receives its own process-local disposable lab and SQLite store. This supports the local demonstration across an interrupt but does not claim recovery across Agent Server restarts.
 
 To retain the run in LangSmith instead, set `LANGSMITH_API_KEY` in the gitignored `.env` and launch with `LANGSMITH_TRACING=true ./scripts/studio.sh`.
 
