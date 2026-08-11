@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-export LANGSMITH_TRACING=false
+export LANGSMITH_TRACING="${LANGSMITH_TRACING:-false}"
 export LANGGRAPH_CLI_NO_ANALYTICS=1
 export PYTHONPATH="${PWD}${PYTHONPATH:+:${PYTHONPATH}}"
 

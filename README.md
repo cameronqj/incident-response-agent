@@ -205,6 +205,8 @@ The repository exports the synthetic site investigator through `langgraph.json` 
 
 Open the Studio URL printed by the command and submit: `The owned disposable site has failed its health check. Investigate the cause and propose one bounded remediation.` The graph still calls the configured external inference endpoint, so `OPENCODE_KEY` is required; only LangSmith authentication and hosted tracing are disabled. The exported graph uses a process-owned synthetic sandbox and exposes no remediation or shell tool.
 
+To retain the run in LangSmith instead, set `LANGSMITH_API_KEY` in the gitignored `.env` and launch with `LANGSMITH_TRACING=true ./scripts/studio.sh`.
+
 Live provider responses are read through a 65,536-byte hard limit before parsing. Structured assessment summaries are limited to 2,000 characters, `evidence_refs` to 20 items of at most 500 characters each, and unknown fields are rejected.
 
 The combined real-model/real-service cycle is separately opt-in:
