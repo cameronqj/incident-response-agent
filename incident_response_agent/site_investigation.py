@@ -37,7 +37,7 @@ class DiagnosticObservation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     evidence_id: str = Field(pattern=r"^[a-z0-9_.-]+$")
-    category: Literal["health", "resources", "services", "processes", "logs"]
+    category: Literal["health", "resources", "services", "processes", "logs", "changes"]
     summary: str = Field(max_length=500)
     signals: list[str] = Field(max_length=20)
     measurements: dict[str, int | float | str | bool | None] = Field(default_factory=dict)
@@ -58,6 +58,7 @@ class SiteDiagnosticTarget(Protocol):
     def check_health(self) -> DiagnosticObservation: ...
     def inspect_resources(self) -> DiagnosticObservation: ...
     def inspect_recent_logs(self) -> DiagnosticObservation: ...
+    def inspect_recent_changes(self) -> DiagnosticObservation: ...
 
 
 @dataclass
@@ -66,6 +67,7 @@ class DisposableSiteLab:
 
     sandbox: DisposableSandbox
     _expected_scenario: Scenario = field(repr=False)
+    _profile: Literal["baseline", "causal"] = field(default="baseline", repr=False)
 
     @classmethod
     def disk_exhaustion(cls, sandbox: DisposableSandbox) -> "DisposableSiteLab":
@@ -75,6 +77,12 @@ class DisposableSiteLab:
             (logs / f"application.{index}.rotated").write_text("bounded synthetic log\n", encoding="utf-8")
         (logs / "application.log").write_text("rotation failed: no space left on device\n", encoding="utf-8")
         return cls(sandbox=sandbox, _expected_scenario=Scenario.DISK_EXHAUSTION)
+
+    @classmethod
+    def causal_disk_exhaustion(cls, sandbox: DisposableSandbox) -> "DisposableSiteLab":
+        lab = cls.disk_exhaustion(sandbox)
+        lab._profile = "causal"
+        return lab
 
     @property
     def expected_scenario(self) -> Scenario:
@@ -87,10 +95,18 @@ class DisposableSiteLab:
 
     def inspect_resources(self) -> DiagnosticObservation:
         unhealthy = any(self.sandbox.resolve_child("logs").glob("*.rotated"))
-        return DiagnosticObservation(evidence_id="resources-1", category="resources", summary="Filesystem capacity is critically low while CPU and memory remain normal." if unhealthy else "Filesystem capacity, CPU, and memory are normal.", signals=["low_free_space"] if unhealthy else ["resources_normal"], measurements={"free_bytes": 4096 if unhealthy else 1_048_576, "cpu_percent": 12.0, "memory_percent": 38.0})
+        cpu_percent = 78.0 if unhealthy and self._profile == "causal" else 12.0
+        summary = "Filesystem capacity is critically low and CPU is elevated while memory remains normal." if unhealthy and self._profile == "causal" else "Filesystem capacity is critically low while CPU and memory remain normal." if unhealthy else "Filesystem capacity, CPU, and memory are normal."
+        signals = ["low_free_space", "elevated_cpu"] if unhealthy and self._profile == "causal" else ["low_free_space"] if unhealthy else ["resources_normal"]
+        return DiagnosticObservation(evidence_id="resources-1", category="resources", summary=summary, signals=signals, measurements={"free_bytes": 4096 if unhealthy else 1_048_576, "cpu_percent": cpu_percent, "memory_percent": 38.0})
 
     def inspect_recent_logs(self) -> DiagnosticObservation:
         return DiagnosticObservation(evidence_id="logs-1", category="logs", summary="Recent bounded logs report that normal rotation failed after the filesystem ran out of space.", signals=["rotation_error", "no_space_left"], measurements={"affected_file_count": 3, "log_growth_bytes_per_minute": 262_144})
+
+    def inspect_recent_changes(self) -> DiagnosticObservation:
+        if self._profile == "causal":
+            return DiagnosticObservation(evidence_id="changes-1", category="changes", summary="A recent deployment completed successfully before the health check failed, with no rollback or configuration error reported.", signals=["deployment_completed", "no_deployment_error"], measurements={"minutes_before_failure": 18, "rollback_count": 0})
+        return DiagnosticObservation(evidence_id="changes-1", category="changes", summary="No recent deployment or configuration change was recorded.", signals=["no_recent_change"], measurements={"change_count": 0})
 
     def telemetry_for(self, result: InvestigationResult) -> TelemetryEvidence:
         if result.diagnosed_scenario != self._expected_scenario:
@@ -142,6 +158,7 @@ def build_diagnostic_tools(target: SiteDiagnosticTarget, trace: InvestigationTra
     for name, description, operation in (
         ("check_site_health", "Check the owned disposable site's bounded HTTP health status.", target.check_health),
         ("inspect_resources", "Inspect bounded CPU, memory, and filesystem measurements for the owned site.", target.inspect_resources),
+        ("inspect_recent_changes", "Inspect bounded recent deployment and configuration-change signals for the owned site.", target.inspect_recent_changes),
         ("inspect_recent_logs", "Inspect sanitized, bounded recent log signals for the owned site.", target.inspect_recent_logs),
     ):
         def make_invoke(op: Callable[[], DiagnosticObservation], tool_name: str) -> Callable[[], str]:
@@ -156,7 +173,7 @@ def build_diagnostic_tools(target: SiteDiagnosticTarget, trace: InvestigationTra
     return tools
 
 
-SYSTEM_PROMPT = """You investigate one owned disposable site. Use the smallest useful set of read-only diagnostics to determine why its generic health check failed; stop gathering evidence once the cause is clear. Do not assume an incident category. Return a structured diagnosis immediately after reaching a supported conclusion. Never invent evidence, commands, paths, targets, or parameters. Cite only evidence_id values actually returned by tools. proposed_action_id must be exactly one of: cleanup_rotated_logs, stop_runaway_process, restart_disposable_service, stop_memory_hog, cleanup_log_storm_temp_files. Choose the action compatible with your diagnosed scenario. Deterministic policy and a human remain authoritative."""
+SYSTEM_PROMPT = """You investigate one owned disposable site. Use the smallest useful set of read-only diagnostics to determine why its generic health check failed; stop gathering evidence once the cause is clear. Distinguish a supported causal chain from concurrent symptoms or merely recent events. Do not assume an incident category. Return a structured diagnosis immediately after reaching a supported conclusion. Never invent evidence, commands, paths, targets, or parameters. Cite only evidence_id values actually returned by tools. proposed_action_id must be exactly one of: cleanup_rotated_logs, stop_runaway_process, restart_disposable_service, stop_memory_hog, cleanup_log_storm_temp_files. Choose the action compatible with your diagnosed scenario. Deterministic policy and a human remain authoritative."""
 
 
 RESOURCE_SUBAGENT = {
@@ -174,9 +191,10 @@ SERVICE_SUBAGENT = {
 
 def create_incident_deep_agent(model: BaseChatModel, target: SiteDiagnosticTarget, trace: InvestigationTrace, observability: NoopObservability | OpenTelemetryObservability | None = None, *, platform_managed_checkpointing: bool = False):
     tools = build_diagnostic_tools(target, trace, observability)
+    tools_by_name = {tool.name: tool for tool in tools}
     subagents = [
-        {**RESOURCE_SUBAGENT, "tools": [tools[1]]},
-        {**SERVICE_SUBAGENT, "tools": [tools[0], tools[2]]},
+        {**RESOURCE_SUBAGENT, "tools": [tools_by_name["inspect_resources"]]},
+        {**SERVICE_SUBAGENT, "tools": [tools_by_name["check_site_health"], tools_by_name["inspect_recent_changes"], tools_by_name["inspect_recent_logs"]]},
     ]
     return create_deep_agent(
         model=model,

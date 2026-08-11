@@ -17,7 +17,7 @@ from incident_response_agent.executor import ContainerRemediationExecutor, Dispo
 from incident_response_agent.observability import build_test_observability
 from incident_response_agent.sandbox import DisposableSandbox
 from incident_response_agent.schemas import Decision, DecisionRequest, EventRequest
-from incident_response_agent.service import IncidentService
+from incident_response_agent.service import IncidentService, InvalidTransitionError
 from incident_response_agent.site_investigation import (
     DisposableSiteLab,
     FixedInvestigationTelemetry,
@@ -77,9 +77,40 @@ class ScriptedInvestigationModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=message)])
 
 
+class ScriptedCausalInvestigationModel(ScriptedInvestigationModel):
+    @property
+    def _llm_type(self) -> str:
+        return "scripted-causal-investigation"
+
+    def _generate(self, _messages: list[BaseMessage], stop: list[str] | None = None, run_manager: Any = None, **_kwargs: Any) -> ChatResult:
+        del stop, run_manager
+        self.call_number += 1
+        tool_sequence = ["inspect_resources", "inspect_recent_changes", "inspect_recent_logs"]
+        if self.call_number <= len(tool_sequence):
+            name = tool_sequence[self.call_number - 1]
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content="", tool_calls=[{"name": name, "args": {}, "id": f"causal-{self.call_number}"}]))])
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content="", tool_calls=[{
+            "name": "InvestigationResult",
+            "id": "causal-diagnosis",
+            "args": {
+                "diagnosed_scenario": "disk-exhaustion",
+                "severity": "high",
+                "confidence": 0.93,
+                "evidence_refs": ["resources-1", "changes-1", "logs-1"],
+                "proposed_action_id": "cleanup_rotated_logs",
+                "explanation": "Low free space and ENOSPC rotation failures form the causal chain; the successful deployment and elevated CPU are concurrent signals.",
+            },
+        }]))])
+
+
 def build_lab(tmp_path):
     sandbox = DisposableSandbox.create_test_fixture(tmp_path / "site")
     return sandbox, DisposableSiteLab.disk_exhaustion(sandbox)
+
+
+def build_causal_lab(tmp_path):
+    sandbox = DisposableSandbox.create_test_fixture(tmp_path / "causal-site")
+    return sandbox, DisposableSiteLab.causal_disk_exhaustion(sandbox)
 
 
 def test_diagnostics_expose_symptoms_not_hidden_ground_truth(tmp_path):
@@ -136,6 +167,67 @@ def test_deep_agent_uses_bounded_tools_and_returns_validated_diagnosis(tmp_path)
         assert "write_file" in model.bound_tool_names
         assert "InvestigationResult" in model.bound_tool_names
     finally:
+        sandbox.close()
+
+
+def test_causal_experiment_distinguishes_distractors_and_returns_supported_diagnosis(tmp_path):
+    sandbox, lab = build_causal_lab(tmp_path)
+    try:
+        trace = InvestigationTrace()
+        result = investigate_site(
+            create_incident_deep_agent(ScriptedCausalInvestigationModel(), lab, trace),
+            SiteHealthAlert(idempotency_key="causal-site-1", observed_at=datetime.now(timezone.utc)),
+            trace,
+        )
+        observations = trace.observations_for("causal-site-1")
+        assert trace.tool_calls_for("causal-site-1") == ["inspect_resources", "inspect_recent_changes", "inspect_recent_logs"]
+        assert observations["resources-1"].measurements["cpu_percent"] == 78.0
+        assert observations["changes-1"].signals == ["deployment_completed", "no_deployment_error"]
+        assert result.diagnosed_scenario.value == "disk-exhaustion"
+        assert result.proposed_action_id == "cleanup_rotated_logs"
+        assert set(result.evidence_refs) == set(observations)
+    finally:
+        sandbox.close()
+
+
+def test_causal_experiment_reuses_approval_gate_and_verifies_recovery(tmp_path):
+    sandbox, lab = build_causal_lab(tmp_path)
+    service = None
+    try:
+        trace = InvestigationTrace()
+        alert = SiteHealthAlert(idempotency_key="causal-site-2", observed_at=datetime.now(timezone.utc))
+        result = investigate_site(create_incident_deep_agent(ScriptedCausalInvestigationModel(), lab, trace), alert, trace)
+        service = IncidentService(
+            SQLiteStore(":memory:"),
+            FixedInvestigationTelemetry(lab.telemetry_for(result)),
+            InvestigationAnalyzer(result),
+            DisposableFilesystemExecutor(sandbox),
+            execution_enabled=True,
+        )
+        run = service.start_event(EventRequest.model_validate({
+            "idempotency_key": alert.idempotency_key,
+            "source": "local_simulation",
+            "observed_at": alert.observed_at,
+            "payload": {"scenario": result.diagnosed_scenario.value},
+        }))
+        assert run.proposal is not None
+        proposal = run.proposal
+        service.record_diagnostic_tools(run.run_id, trace.tool_calls_for(alert.idempotency_key), "deep-agent-investigator")
+        with pytest.raises(InvalidTransitionError, match="approved"):
+            service.execute(proposal.proposal_id)
+        assert lab.check_health().measurements["status_code"] == 503
+        service.decide(proposal.proposal_id, DecisionRequest(decision=Decision.APPROVE, revision=proposal.revision, action_hash=proposal.action_hash))
+        completed = service.execute(proposal.proposal_id)
+        healthy = lab.check_health().measurements["status_code"] == 200
+        service.record_recovery_verification(completed.run_id, proposal.proposal_id, healthy, "test")
+        assert healthy
+        audited = service.get_run(completed.run_id)
+        assert sum(item.event_type == "diagnostic_tool_called" for item in audited.audit) == 3
+        assert any(item.event_type == "approval_decision" for item in audited.audit)
+        assert any(item.event_type == "recovery_verified" for item in audited.audit)
+    finally:
+        if service:
+            service.close()
         sandbox.close()
 
 
