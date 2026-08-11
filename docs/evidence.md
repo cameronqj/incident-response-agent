@@ -53,7 +53,7 @@ This proves configured OpenAI-compatible assessment in both the disk flow and a 
 
 The offline checks use a scripted tool-calling chat model through the real `create_deep_agent` harness. They verify bounded diagnostic tools, absence of the hidden scenario in observations, observed-evidence citation enforcement, deterministic action compatibility, no shell exposure, handoff to hash-bound approval, recovery verification, and content-free OTel attributes. This proves harness integration and deterministic trajectory behavior, not live-model reliability or real-host diagnosis.
 
-The container-marked check runs the approved cleanup through the existing hardened container executor and verifies recovery. The live check passed after explicitly disabling DeepSeek V4 thinking mode, which rejects the forced tool choice used for structured output. Generic filesystem and delegation tools are hidden for this provider-compatible slice after live probing showed repeated irrelevant virtual-filesystem exploration; the five diagnostic tools and structured result remain available.
+The container-marked check runs the approved cleanup through the existing hardened container executor and verifies recovery. DeepSeek V4 thinking mode rejects forced tool choice, so the live adapter omits only that request parameter while retaining thinking and the normal Deep Agents tool surface. The state backend and permissions still deny filesystem access and expose no shell. The fixture now provides one clear chain—disk pressure followed by failed rotation—so a useful investigation can stop after resource and recent-log evidence.
 
 ### Live-inference observation
 
@@ -61,8 +61,8 @@ The container-marked check runs the approved cleanup through the existing harden
 - Configured endpoint: `https://opencode.ai/zen/go/v1`
 - Model: `deepseek-v4-flash`
 - Real external model: yes
-- Result: diagnosed `disk-exhaustion` from five bounded observations and selected `cleanup_rotated_logs`
-- Provider adaptation: `thinking.type=disabled` for required structured tool choice
-- Observed variability: the first live probe rejected required tool choice in default thinking mode; a later probe terminated only after generic filesystem and delegation tools were removed from the model-visible tool set.
+- Result: diagnosed `disk-exhaustion` and selected `cleanup_rotated_logs`
+- Provider adaptation: omit forced `tool_choice`; retain DeepSeek thinking mode and tool schemas
+- Observed variability: forced tool choice produced a provider error; once omitted, the native Deep Agents surface completed the investigation. The dated pass counts above describe the prior verified snapshot and are not silently rewritten by this refinement.
 
 This proves one successful live Deep Agents investigation against the configured endpoint and the complete existing live regression. It does not prove deterministic diagnosis, general provider compatibility, safe arbitrary shell access, production-host inspection, or autonomous remediation.

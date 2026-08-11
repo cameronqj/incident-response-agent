@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 from typing import Any, Sequence
+from unittest.mock import patch
 
 import pytest
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -19,6 +20,7 @@ from incident_response_agent.sandbox import DisposableSandbox
 from incident_response_agent.schemas import Decision, DecisionRequest, EventRequest
 from incident_response_agent.service import IncidentService
 from incident_response_agent.site_investigation import (
+    DeepSeekCompatibleChatOpenAI,
     DisposableSiteLab,
     FixedInvestigationTelemetry,
     InvestigationAnalyzer,
@@ -94,13 +96,16 @@ def test_diagnostics_expose_symptoms_not_hidden_ground_truth(tmp_path):
         sandbox.close()
 
 
-def test_live_model_factory_disables_incompatible_thinking_and_masks_key(monkeypatch):
+def test_live_model_factory_omits_forced_tool_choice_and_masks_key(monkeypatch):
     from incident_response_agent.config import Settings
     from incident_response_agent.site_investigation import create_live_investigation_model
 
     monkeypatch.setenv("TEST_DEEP_AGENT_KEY", "model-key-secret-canary")
     model = create_live_investigation_model(Settings(api_key_env="TEST_DEEP_AGENT_KEY"))
-    assert model.extra_body == {"thinking": {"type": "disabled"}}
+    assert isinstance(model, DeepSeekCompatibleChatOpenAI)
+    with patch("langchain_openai.ChatOpenAI.bind_tools", return_value="bound") as bind_tools:
+        assert model.bind_tools([], tool_choice="any") == "bound"
+        assert "tool_choice" not in bind_tools.call_args.kwargs
     assert "model-key-secret-canary" not in repr(model)
 
 
@@ -113,10 +118,10 @@ def test_deep_agent_uses_bounded_tools_and_returns_validated_diagnosis(tmp_path)
         result = investigate_site(agent, SiteHealthAlert(idempotency_key="site-1", observed_at=datetime.now(timezone.utc)), trace)
         assert result.diagnosed_scenario.value == "disk-exhaustion"
         assert trace.tool_calls == ["inspect_resources", "inspect_recent_logs"]
-        assert "task" not in model.bound_tool_names
+        assert "task" in model.bound_tool_names
         assert "execute" not in model.bound_tool_names
-        assert "read_file" not in model.bound_tool_names
-        assert "write_file" not in model.bound_tool_names
+        assert "read_file" in model.bound_tool_names
+        assert "write_file" in model.bound_tool_names
         assert "InvestigationResult" in model.bound_tool_names
     finally:
         sandbox.close()

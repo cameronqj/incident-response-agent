@@ -40,7 +40,7 @@ flowchart LR
     OTel --> Collector[OTLP Collector]
 ```
 
-The scenario-specific API and CLI paths are pre-triaged workflows. The separate Deep Agents path starts with only `site unhealthy`, uses read-only diagnostic tools, validates cited evidence and the proposed action deterministically, and then reuses the immutable proposal and execution machinery. Delegation profiles exist for follow-on experiments, but delegation is hidden in the first provider-compatible live slice to keep termination bounded.
+The scenario-specific API and CLI paths are pre-triaged workflows. The separate Deep Agents path starts with only `site unhealthy`, uses the shortest useful sequence of read-only diagnostics, validates cited evidence and the proposed action deterministically, and then reuses the immutable proposal and execution machinery. The normal Deep Agents delegation and virtual-filesystem tools remain model-visible, while the state backend denies filesystem access and provides no shell execution capability.
 
 The incident workflow provides enough branching, latency, failure, approval, and side-effect behavior to make telemetry meaningful. SQLite records the sanitized durable history; OpenTelemetry supplies operational traces and metrics. Both are correlated without exporting event bodies, prompts, evidence text, credentials, paths, or arbitrary model output.
 

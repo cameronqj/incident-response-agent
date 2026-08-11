@@ -10,7 +10,7 @@ This repository is a bounded POC, not a production incident-response service.
 - Event intake accepts only typed local simulations. Production webhook authentication is not implemented.
 - Real host and production-service inspection and remediation are not implemented. The opt-in service lab can inspect and restart only its own disposable target.
 - OpenTelemetry export is disabled by default, uses a strict attribute allowlist, and does not replace sanitized SQLite audit records.
-- The Deep Agent can inspect only one owned synthetic site through typed read-only tools. Generic filesystem and shell tools are removed at the model boundary; defensive filesystem permissions deny paths the application does not use.
+- The Deep Agent can inspect only one owned synthetic site through typed read-only tools. Its thread-local virtual filesystem is denied by defensive permissions, and its state backend provides no shell execution capability.
 
 ## Threat model
 
@@ -22,7 +22,7 @@ This repository is a bounded POC, not a production incident-response service.
 | Prompt injection through logs | Synthetic bounded evidence and structured model output; deterministic policy is authoritative | Live-model assessment quality is not guaranteed |
 | Deep Agent prompt injection | Sanitized bounded observations, curated runbooks, strict structured results, observed-evidence validation, and deterministic action policy | A live model may still waste calls, misdiagnose, or decline the task |
 | Hidden fixture disclosure | Injected ground truth remains a private lab field and is absent from messages, tool schemas/results, and virtual files; regression tests scan observations | Fixture implementation remains locally inspectable by a developer with source access |
-| Filesystem or subagent escalation | Generic filesystem tools are hidden, defensive permissions deny unused paths, subagents receive only explicit diagnostic tools, and no `execute` tool exists | Deep Agents and LangChain dependency vulnerabilities require ongoing maintenance |
+| Filesystem or subagent escalation | Defensive permissions deny virtual-filesystem paths, subagents receive only explicit diagnostic tools, and the state backend exposes no `execute` tool | Deep Agents and LangChain dependency vulnerabilities require ongoing maintenance |
 | Excessive agent activity | Provider timeout/retries, diagnostic outputs, schemas, and graph recursion are bounded | Cost budgets and provider-side quotas remain operator responsibilities |
 | Secret leakage | Tokens never enter service records; assignment-style and JSON-shaped credentials, home paths, and private IPs are redacted before event/audit persistence | Operators must still protect process environment and local `.env` |
 | Oversized or malicious model output | Provider responses are read through a 65,536-byte limit; strict schemas bound text, lists, and fields before persistence; model output cannot define commands or targets | Model assessment quality and provider availability remain variable |

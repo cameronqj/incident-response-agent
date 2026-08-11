@@ -10,7 +10,6 @@ from deepagents.backends import StateBackend
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
-from langchain.agents.middleware import ModelRequest, ModelResponse, wrap_model_call
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -97,7 +96,7 @@ class DisposableSiteLab:
         return DiagnosticObservation(evidence_id="processes-1", category="processes", summary="No runaway or memory-intensive process is present.", signals=["processes_normal"], measurements={"runaway_process_detected": False, "oom_kill_detected": False})
 
     def inspect_recent_logs(self) -> DiagnosticObservation:
-        return DiagnosticObservation(evidence_id="logs-1", category="logs", summary="Recent bounded logs report failed rotation and no space remaining.", signals=["rotation_error", "rapid_log_growth"], measurements={"affected_file_count": 3, "log_growth_bytes_per_minute": 8_388_608})
+        return DiagnosticObservation(evidence_id="logs-1", category="logs", summary="Recent bounded logs report that normal rotation failed after the filesystem ran out of space.", signals=["rotation_error", "no_space_left"], measurements={"affected_file_count": 3, "log_growth_bytes_per_minute": 262_144})
 
     def telemetry_for(self, result: InvestigationResult) -> TelemetryEvidence:
         if result.diagnosed_scenario != self._expected_scenario:
@@ -107,7 +106,7 @@ class DisposableSiteLab:
             scenario_kind=ScenarioKind.SYNTHETIC_MARKER,
             rotation_failed=True,
             free_bytes=4096,
-            log_growth_bytes_per_minute=8_388_608,
+            log_growth_bytes_per_minute=262_144,
             affected_file_count=3,
             signals=result.evidence_refs,
             fault_injection="ENOSPC",
@@ -131,8 +130,6 @@ def build_diagnostic_tools(target: SiteDiagnosticTarget, trace: InvestigationTra
     for name, description, operation in (
         ("check_site_health", "Check the owned disposable site's bounded HTTP health status.", target.check_health),
         ("inspect_resources", "Inspect bounded CPU, memory, and filesystem measurements for the owned site.", target.inspect_resources),
-        ("inspect_services", "Inspect bounded service state for the owned site.", target.inspect_services),
-        ("inspect_processes", "Inspect bounded process anomaly signals for the owned site.", target.inspect_processes),
         ("inspect_recent_logs", "Inspect sanitized, bounded recent log signals for the owned site.", target.inspect_recent_logs),
     ):
         def make_invoke(op: Callable[[], DiagnosticObservation], tool_name: str) -> Callable[[], str]:
@@ -146,23 +143,7 @@ def build_diagnostic_tools(target: SiteDiagnosticTarget, trace: InvestigationTra
     return tools
 
 
-SYSTEM_PROMPT = """You investigate one owned disposable site. Plan a concise investigation and use only the supplied read-only diagnostic tools to determine why a generic health check failed. Do not assume an incident category. After diagnostics, immediately return a structured diagnosis. Never invent evidence, commands, paths, targets, or parameters. Cite only evidence_id values actually returned by tools. proposed_action_id must be exactly one of: cleanup_rotated_logs, stop_runaway_process, restart_disposable_service, stop_memory_hog, cleanup_log_storm_temp_files. Choose the action compatible with your diagnosed scenario. Deterministic policy and a human remain authoritative."""
-
-AGENT_TOOL_ALLOWLIST = {
-    "check_site_health",
-    "inspect_resources",
-    "inspect_services",
-    "inspect_processes",
-    "inspect_recent_logs",
-    "InvestigationResult",
-}
-
-
-@wrap_model_call
-def incident_tool_boundary(request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]) -> ModelResponse:
-    """Hide generic filesystem tools from the incident model and retain the Deep Agent harness state internally."""
-    tools = [tool for tool in request.tools if tool.name in AGENT_TOOL_ALLOWLIST]
-    return handler(request.override(tools=tools))
+SYSTEM_PROMPT = """You investigate one owned disposable site. Use the smallest useful set of read-only diagnostics to determine why its generic health check failed; stop gathering evidence once the cause is clear. Do not assume an incident category. Return a structured diagnosis immediately after reaching a supported conclusion. Never invent evidence, commands, paths, targets, or parameters. Cite only evidence_id values actually returned by tools. proposed_action_id must be exactly one of: cleanup_rotated_logs, stop_runaway_process, restart_disposable_service, stop_memory_hog, cleanup_log_storm_temp_files. Choose the action compatible with your diagnosed scenario. Deterministic policy and a human remain authoritative."""
 
 
 RESOURCE_SUBAGENT = {
@@ -181,15 +162,14 @@ SERVICE_SUBAGENT = {
 def create_incident_deep_agent(model: BaseChatModel, target: SiteDiagnosticTarget, trace: InvestigationTrace, observability: NoopObservability | OpenTelemetryObservability | None = None):
     tools = build_diagnostic_tools(target, trace, observability)
     subagents = [
-        {**RESOURCE_SUBAGENT, "tools": tools[1:4]},
-        {**SERVICE_SUBAGENT, "tools": [tools[0], tools[2], tools[4]]},
+        {**RESOURCE_SUBAGENT, "tools": [tools[1]]},
+        {**SERVICE_SUBAGENT, "tools": [tools[0], tools[2]]},
     ]
     return create_deep_agent(
         model=model,
         tools=tools,
         system_prompt=SYSTEM_PROMPT,
         subagents=subagents,
-        middleware=[incident_tool_boundary],
         response_format=InvestigationResult,
         backend=StateBackend(),
         permissions=[
@@ -205,15 +185,24 @@ def create_live_investigation_model(settings: Settings) -> ChatOpenAI:
     api_key = os.getenv(settings.api_key_env)
     if not api_key:
         raise ValueError(f"{settings.api_key_env} is required for the Deep Agents investigation demo")
-    return ChatOpenAI(
+    return DeepSeekCompatibleChatOpenAI(
         model=settings.model,
         base_url=settings.base_url,
         api_key=api_key,
         timeout=settings.model_timeout_seconds,
         max_retries=settings.model_max_retries,
         temperature=0,
-        extra_body={"thinking": {"type": "disabled"}},
     )
+
+
+class DeepSeekCompatibleChatOpenAI(ChatOpenAI):
+    """Omit forced tool choice, which DeepSeek V4 thinking mode rejects."""
+
+    def bind_tools(self, tools, **kwargs):
+        tool_choice = kwargs.get("tool_choice")
+        if isinstance(tool_choice, dict) or tool_choice in ("any", "required", True):
+            kwargs.pop("tool_choice", None)
+        return super().bind_tools(tools, **kwargs)
 
 
 def investigate_site(agent, alert: SiteHealthAlert, trace: InvestigationTrace, observability: NoopObservability | OpenTelemetryObservability | None = None) -> InvestigationResult:
