@@ -207,6 +207,8 @@ Open the Studio URL printed by the command and submit: `The owned disposable sit
 
 To retain the run in LangSmith instead, set `LANGSMITH_API_KEY` in the gitignored `.env` and launch with `LANGSMITH_TRACING=true ./scripts/studio.sh`.
 
+![LangSmith Studio showing the site-investigator graph and its live diagnostic tool trace](docs/assets/langsmith-studio-site-investigation.png)
+
 Live provider responses are read through a 65,536-byte hard limit before parsing. Structured assessment summaries are limited to 2,000 characters, `evidence_refs` to 20 items of at most 500 characters each, and unknown fields are rejected.
 
 The combined real-model/real-service cycle is separately opt-in:
