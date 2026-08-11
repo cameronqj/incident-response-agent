@@ -18,6 +18,7 @@ from incident_response_agent.runbook_learning import (
     WorkerMemoryPressureLab,
     create_runbook_research_agent,
     research_runbook,
+    simulated_reviewer_revision,
 )
 from incident_response_agent.site_investigation import InvestigationTrace, build_diagnostic_tools
 
@@ -175,7 +176,40 @@ def test_human_approval_cannot_bypass_hidden_evaluation_gate():
     )
     assert isinstance(failed, RunbookCandidate)
     assert failed.state == RunbookCandidateState.EVALUATION_FAILED
+    assert failed.evaluation is not None
+    assert failed.evaluation.false_positive_count == 1
     assert registry.find_applicable({"memory_pressure", "oom_kill"}, {"resources", "logs"}) == []
+
+
+def test_simulated_reviewer_revision_preserves_original_and_passes_same_gate():
+    overly_strict = RunbookResearchProposal.model_validate(_proposal_args(
+        applicability_signals=[
+            "http_503",
+            "worker_unavailable",
+            "memory_pressure",
+            "worker_concurrency_increased",
+            "concurrency_correlated_oom",
+        ],
+        required_evidence_categories=["health", "resources", "changes", "logs"],
+    ))
+    registry = RunbookRegistry(":memory:")
+    original = registry.submit(overly_strict)
+    revision = registry.revise(
+        original.candidate_id,
+        simulated_reviewer_revision(overly_strict),
+        actor="simulated-sre-reviewer",
+        note="Keep causal applicability signals only.",
+    )
+    assert registry.get_candidate(original.candidate_id).state == RunbookCandidateState.SUPERSEDED
+    assert revision.supersedes_candidate_id == original.candidate_id
+    promoted = registry.review(
+        revision.candidate_id,
+        RunbookReviewDecision.APPROVE,
+        actor="simulated-sre-reviewer",
+        evaluator=DeterministicRunbookEvaluator(),
+    )
+    assert isinstance(promoted, PromotedRunbook)
+    assert promoted.evaluation.passed
 
 
 def test_candidate_digest_detects_persistent_tampering():
@@ -187,3 +221,24 @@ def test_candidate_digest_detects_persistent_tampering():
     )
     with pytest.raises(ValueError, match="digest is invalid"):
         registry.get_candidate(candidate.candidate_id)
+
+
+def test_retrieval_returns_only_latest_promoted_version():
+    registry = RunbookRegistry(":memory:")
+    evaluator = DeterministicRunbookEvaluator()
+    for title in ("Initial runbook version", "Refined runbook version"):
+        candidate = registry.submit(RunbookResearchProposal.model_validate(_proposal_args(title=title)))
+        promoted = registry.review(candidate.candidate_id, RunbookReviewDecision.APPROVE, "simulated-sre-reviewer", evaluator)
+        assert isinstance(promoted, PromotedRunbook)
+    matches = registry.find_applicable(
+        {"memory_pressure", "worker_concurrency_increased", "concurrency_correlated_oom", "oom_kill"},
+        {"health", "resources", "changes", "logs"},
+    )
+    assert [(match.version, match.proposal.title) for match in matches] == [(2, "Refined runbook version")]
+
+
+def test_runbook_model_fields_are_individually_bounded():
+    with pytest.raises(ValueError):
+        RunbookResearchProposal.model_validate(_proposal_args(applicability_signals=["memory_pressure", "x" * 65]))
+    with pytest.raises(ValueError):
+        RunbookResearchProposal.model_validate(_proposal_args(diagnostic_steps=["valid bounded step", "x" * 501]))

@@ -129,6 +129,18 @@ The harness creates or reuses the versioned `incident-response-agent-reflection-
 
 ![LangSmith dataset experiments comparing direct and critique investigators](docs/assets/langsmith-reflection-evaluation.png)
 
+### Governed runbook learning
+
+The separate runbook-learning POC investigates an unfamiliar disposable worker-memory failure, persists a structured knowledge candidate, and sends it through an application-owned review and deterministic promotion gate. It does not use Studio for approval and it cannot add executable authority. For a live demonstration with an explicitly simulated reviewer:
+
+```bash
+.venv/bin/python -m incident_response_agent.cli runbook-learning-demo \
+  --database-path .data/runbook-learning.sqlite3 \
+  --simulate-review revise-approve
+```
+
+The original model proposal remains immutable. The simulated reviewer creates a linked revision that removes generic symptoms from the reusable match contract, approves evaluation, and promotes the revision only if it passes all hidden positive and distractor cases. The command then simulates a later incident retrieving the promoted version. Use `--simulate-review approve` to demonstrate that human approval alone cannot bypass a failing gate, or `reject` to demonstrate terminal rejection. See [`docs/full-sre-agent.md`](docs/full-sre-agent.md) for the high-level path from governed runbook learning to separately reviewed executable capability promotion.
+
 For a real disposable-service recovery cycle, use a bearer token and a working Podman/Docker engine. The command displays the immutable proposal and waits for `approve` before restarting anything:
 
 ```bash

@@ -187,6 +187,7 @@ def runbook_learning_demo(database_path: str, decision: str) -> None:
         WorkerMemoryPressureLab,
         create_runbook_research_agent,
         research_runbook,
+        simulated_reviewer_revision,
     )
 
     settings = Settings.from_env()
@@ -201,6 +202,15 @@ def runbook_learning_demo(database_path: str, decision: str) -> None:
     try:
         candidate = registry.submit(proposal)
         print(json.dumps({"phase": "candidate", "reviewer_kind": "simulated_human", "candidate": candidate.model_dump(mode="json")}, indent=2))
+        if decision == "revise-approve":
+            candidate = registry.revise(
+                candidate.candidate_id,
+                simulated_reviewer_revision(candidate.proposal),
+                actor="simulated-sre-reviewer",
+                note="Removed generic health and normal-state observations from the reusable applicability contract.",
+            )
+            print(json.dumps({"phase": "revised_candidate", "reviewer_kind": "simulated_human", "candidate": candidate.model_dump(mode="json")}, indent=2))
+            decision = "approve"
         reviewed = registry.review(
             candidate.candidate_id,
             RunbookReviewDecision(decision),
@@ -235,7 +245,7 @@ def main() -> None:
     reflection_parser.add_argument("--no-upload", action="store_true", help="run without retaining LangSmith experiment results")
     runbook_parser = subparsers.add_parser("runbook-learning-demo", help="research and evaluate one runbook with a simulated application reviewer")
     runbook_parser.add_argument("--database-path", default=".data/runbook-learning.sqlite3")
-    runbook_parser.add_argument("--simulate-review", choices=["approve", "reject"], default="approve")
+    runbook_parser.add_argument("--simulate-review", choices=["approve", "reject", "revise-approve"], default="revise-approve")
     init_parser = subparsers.add_parser("init-db", help="create or migrate the SQLite database")
     init_parser.add_argument("--database-path", default=None)
     serve_parser = subparsers.add_parser("serve", help="run the FastAPI service")

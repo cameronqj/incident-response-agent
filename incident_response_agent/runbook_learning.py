@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from threading import RLock
-from typing import ClassVar, Literal, Protocol
+from typing import Annotated, ClassVar, Literal, Protocol
 from uuid import uuid4
 
 from deepagents import FilesystemPermission, create_deep_agent
@@ -20,8 +20,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from .site_investigation import DiagnosticObservation, InvestigationTrace, SiteDiagnosticTarget, build_diagnostic_tools
 
 
+SignalName = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_.-]*$")]
+EvidenceId = Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[a-z0-9][a-z0-9_.-]*$")]
+DiagnosticStep = Annotated[str, Field(min_length=5, max_length=500)]
+
+
 class RunbookCandidateState(str, Enum):
     PENDING_REVIEW = "pending_review"
+    SUPERSEDED = "superseded"
     REJECTED = "rejected"
     EVALUATION_FAILED = "evaluation_failed"
     PROMOTED = "promoted"
@@ -38,11 +44,11 @@ class RunbookResearchProposal(BaseModel):
     problem_signature: str = Field(min_length=3, max_length=128, pattern=r"^[a-z0-9][a-z0-9.-]+$")
     title: str = Field(min_length=3, max_length=160)
     summary: str = Field(min_length=10, max_length=1000)
-    applicability_signals: list[str] = Field(min_length=2, max_length=12)
+    applicability_signals: list[SignalName] = Field(min_length=2, max_length=12)
     required_evidence_categories: list[Literal["health", "resources", "services", "processes", "logs", "changes"]] = Field(min_length=2, max_length=6)
-    diagnostic_steps: list[str] = Field(min_length=2, max_length=8)
+    diagnostic_steps: list[DiagnosticStep] = Field(min_length=2, max_length=8)
     conclusion: str = Field(min_length=10, max_length=1000)
-    source_evidence_refs: list[str] = Field(min_length=2, max_length=12)
+    source_evidence_refs: list[EvidenceId] = Field(min_length=2, max_length=12)
     confidence: float = Field(ge=0, le=1)
 
 
@@ -58,14 +64,15 @@ class RunbookCandidate(BaseModel):
     reviewer: str | None = None
     review_note: str | None = None
     evaluation: RunbookPromotionEvaluation | None = None
+    supersedes_candidate_id: str | None = None
 
 
 class RunbookEvaluationCase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     case_id: str
-    signals: list[str]
-    evidence_categories: list[str]
+    signals: list[SignalName] = Field(max_length=20)
+    evidence_categories: list[str] = Field(max_length=6)
     expected_match: bool
 
 
@@ -270,7 +277,8 @@ class RunbookRegistry:
                     reviewed_at TEXT,
                     reviewer TEXT,
                     review_note TEXT,
-                    evaluation_json TEXT
+                    evaluation_json TEXT,
+                    supersedes_candidate_id TEXT REFERENCES runbook_candidates(candidate_id)
                 );
                 CREATE TABLE IF NOT EXISTS promoted_runbooks (
                     runbook_id TEXT NOT NULL,
@@ -285,6 +293,9 @@ class RunbookRegistry:
                 );
                 """
             )
+            columns = {row["name"] for row in self.connection.execute("PRAGMA table_info(runbook_candidates)").fetchall()}
+            if "supersedes_candidate_id" not in columns:
+                self.connection.execute("ALTER TABLE runbook_candidates ADD COLUMN supersedes_candidate_id TEXT")
 
     def close(self) -> None:
         with self.lock:
@@ -330,7 +341,59 @@ class RunbookRegistry:
             reviewer=row["reviewer"],
             review_note=row["review_note"],
             evaluation=RunbookPromotionEvaluation.model_validate_json(row["evaluation_json"]) if row["evaluation_json"] else None,
+            supersedes_candidate_id=row["supersedes_candidate_id"],
         )
+
+    def revise(
+        self,
+        candidate_id: str,
+        revised_proposal: RunbookResearchProposal,
+        actor: str,
+        note: str | None = None,
+        now: datetime | None = None,
+    ) -> RunbookCandidate:
+        if not actor or len(actor) > 128:
+            raise ValueError("review actor must be a bounded non-empty identifier")
+        if note is not None and len(note) > 1000:
+            raise ValueError("review note exceeds 1000 characters")
+        candidate = self.get_candidate(candidate_id)
+        if candidate.state != RunbookCandidateState.PENDING_REVIEW:
+            raise ValueError("only pending runbook candidates may be revised")
+        revised_at = now or datetime.now(timezone.utc)
+        revision = RunbookCandidate(
+            candidate_id=str(uuid4()),
+            state=RunbookCandidateState.PENDING_REVIEW,
+            proposal=revised_proposal,
+            content_digest=proposal_digest(revised_proposal),
+            created_at=revised_at,
+            supersedes_candidate_id=candidate_id,
+        )
+        with self.lock:
+            self.connection.execute("BEGIN IMMEDIATE")
+            try:
+                updated = self.connection.execute(
+                    "UPDATE runbook_candidates SET state = ?, reviewed_at = ?, reviewer = ?, review_note = ? WHERE candidate_id = ? AND state = ?",
+                    (RunbookCandidateState.SUPERSEDED.value, revised_at.isoformat(), actor, note, candidate_id, RunbookCandidateState.PENDING_REVIEW.value),
+                ).rowcount
+                if updated != 1:
+                    raise ValueError("runbook candidate revision lost a concurrent decision")
+                self.connection.execute(
+                    "INSERT INTO runbook_candidates(candidate_id, state, proposal_json, content_digest, created_at, supersedes_candidate_id) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        revision.candidate_id,
+                        revision.state.value,
+                        revision.proposal.model_dump_json(),
+                        revision.content_digest,
+                        revision.created_at.isoformat(),
+                        candidate_id,
+                    ),
+                )
+            except Exception:
+                self.connection.rollback()
+                raise
+            else:
+                self.connection.commit()
+        return revision
 
     def review(
         self,
@@ -451,3 +514,15 @@ class RunbookRegistry:
                     evaluation=RunbookPromotionEvaluation.model_validate_json(row["evaluation_json"]),
                 ))
         return matches
+
+
+def simulated_reviewer_revision(proposal: RunbookResearchProposal) -> RunbookResearchProposal:
+    """POC-only reviewer edit; production review remains an external human decision."""
+    non_causal_context = {"http_503", "worker_unavailable", "cpu_normal", "filesystem_normal", "image_unchanged"}
+    applicability_signals = [signal for signal in proposal.applicability_signals if signal not in non_causal_context]
+    required_categories = [category for category in proposal.required_evidence_categories if category != "health"]
+    return RunbookResearchProposal.model_validate({
+        **proposal.model_dump(mode="json"),
+        "applicability_signals": applicability_signals,
+        "required_evidence_categories": required_categories,
+    })
