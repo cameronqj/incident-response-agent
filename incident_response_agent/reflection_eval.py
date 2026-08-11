@@ -147,9 +147,13 @@ class DiagnosisCritic(Protocol):
     def critique(self, result: InvestigationResult, observations: dict[str, DiagnosticObservation]) -> CritiqueResult: ...
 
 
+class DiagnosisReviser(Protocol):
+    def revise(self, result: InvestigationResult, critique: CritiqueResult, observations: dict[str, DiagnosticObservation]) -> InvestigationResult: ...
+
+
 class LiveDiagnosisCritic:
     def __init__(self, model: BaseChatModel):
-        self.model = model.with_structured_output(CritiqueResult)
+        self.model = model.with_structured_output(CritiqueResult, method="function_calling")
 
     def critique(self, result: InvestigationResult, observations: dict[str, DiagnosticObservation]) -> CritiqueResult:
         payload = {
@@ -163,6 +167,25 @@ class LiveDiagnosisCritic:
             HumanMessage(content=json.dumps(payload, separators=(",", ":"), sort_keys=True)),
         ])
         return CritiqueResult.model_validate(response)
+
+
+class LiveDiagnosisReviser:
+    def __init__(self, model: BaseChatModel):
+        self.model = model.with_structured_output(InvestigationResult, method="function_calling")
+
+    def revise(self, result: InvestigationResult, critique: CritiqueResult, observations: dict[str, DiagnosticObservation]) -> InvestigationResult:
+        payload = {
+            "initial_diagnosis": result.model_dump(mode="json"),
+            "critique": critique.model_dump(mode="json"),
+            "observations": {key: value.model_dump(mode="json") for key, value in observations.items()},
+        }
+        response = self.model.invoke([
+            SystemMessage(content=(
+                "Revise an incident diagnosis using only the supplied initial diagnosis, bounded critique, and already-observed evidence. Return the best supported structured diagnosis. Cite only evidence that supports the causal explanation, not observations used solely to reject a hypothesis. The action must remain compatible with the diagnosed scenario. Do not invent evidence, tools, paths, commands, or actions."
+            )),
+            HumanMessage(content=json.dumps(payload, separators=(",", ":"), sort_keys=True)),
+        ])
+        return InvestigationResult.model_validate(response)
 
 
 def reference_output(case: EvaluationCase) -> dict[str, Any]:
@@ -190,33 +213,27 @@ def run_direct_case(case_id: str, model: BaseChatModel) -> dict[str, Any]:
     trace = InvestigationTrace()
     thread_id = f"eval-direct-{case_id}-{uuid4().hex}"
     result = investigate_site(
-        create_incident_deep_agent(model, EvaluationTarget(case), trace),
+        create_incident_deep_agent(model, EvaluationTarget(case), trace, enable_delegation=False),
         SiteHealthAlert(idempotency_key=thread_id, observed_at=datetime.now(timezone.utc)),
         trace,
+        recursion_limit=14,
     )
     return _output(result, trace, thread_id)
 
 
-def run_reflective_case(case_id: str, model: BaseChatModel, critic: DiagnosisCritic) -> dict[str, Any]:
+def run_reflective_case(case_id: str, model: BaseChatModel, critic: DiagnosisCritic, reviser: DiagnosisReviser) -> dict[str, Any]:
     case = EVALUATION_CASES[case_id]
     trace = InvestigationTrace()
     thread_id = f"eval-reflect-{case_id}-{uuid4().hex}"
-    agent = create_incident_deep_agent(model, EvaluationTarget(case), trace)
+    agent = create_incident_deep_agent(model, EvaluationTarget(case), trace, enable_delegation=False)
     alert = SiteHealthAlert(idempotency_key=thread_id, observed_at=datetime.now(timezone.utc))
-    result = investigate_site(agent, alert, trace)
+    result = investigate_site(agent, alert, trace, recursion_limit=14)
     critique = critic.critique(result, trace.observations_for(thread_id))
     observed = trace.observations_for(thread_id)
     if set(critique.unsupported_evidence_refs) - set(observed):
         raise ValueError("critic referenced evidence that was not observed")
     if critique.needs_revision:
-        feedback = (
-            "An independent bounded critic found that the diagnosis needs revision. "
-            f"Unsupported evidence refs: {critique.unsupported_evidence_refs}. "
-            f"Missing evidence categories: {critique.missing_evidence_categories}. "
-            f"Reason: {critique.explanation}. Reassess using available read-only diagnostics and return a corrected structured diagnosis. Cite only evidence that supports the causal explanation."
-        )
-        revised = agent.invoke({"messages": [{"role": "user", "content": feedback}]}, config={"configurable": {"thread_id": thread_id}, "recursion_limit": 16})
-        result = validate_investigation_result(revised["structured_response"], thread_id, trace)
+        result = validate_investigation_result(reviser.revise(result, critique, observed), thread_id, trace)
     if len(trace.tool_calls_for(thread_id)) > MAX_REFLECTIVE_TOOL_CALLS:
         raise ValueError("reflective investigation exceeded its diagnostic tool budget")
     return _output(result, trace, thread_id, critique)
@@ -289,7 +306,7 @@ def run_langsmith_reflection_evaluation(settings: Settings, *, upload_results: b
 
     def reflective_target(inputs: dict) -> dict[str, Any]:
         model = create_live_investigation_model(settings)
-        return run_reflective_case(inputs["case_id"], model, LiveDiagnosisCritic(model))
+        return run_reflective_case(inputs["case_id"], model, LiveDiagnosisCritic(model), LiveDiagnosisReviser(model))
 
     common = {
         "data": dataset,

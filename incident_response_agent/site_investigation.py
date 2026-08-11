@@ -189,7 +189,7 @@ SERVICE_SUBAGENT = {
 }
 
 
-def create_incident_deep_agent(model: BaseChatModel, target: SiteDiagnosticTarget, trace: InvestigationTrace, observability: NoopObservability | OpenTelemetryObservability | None = None, *, platform_managed_checkpointing: bool = False):
+def create_incident_deep_agent(model: BaseChatModel, target: SiteDiagnosticTarget, trace: InvestigationTrace, observability: NoopObservability | OpenTelemetryObservability | None = None, *, platform_managed_checkpointing: bool = False, enable_delegation: bool = True):
     tools = build_diagnostic_tools(target, trace, observability)
     tools_by_name = {tool.name: tool for tool in tools}
     subagents = [
@@ -200,7 +200,7 @@ def create_incident_deep_agent(model: BaseChatModel, target: SiteDiagnosticTarge
         model=model,
         tools=tools,
         system_prompt=SYSTEM_PROMPT,
-        subagents=subagents,
+        subagents=subagents if enable_delegation else [],
         response_format=InvestigationResult,
         backend=StateBackend(),
         permissions=[
@@ -227,7 +227,7 @@ def create_live_investigation_model(settings: Settings) -> ChatOpenAI:
     )
 
 
-def investigate_site(agent, alert: SiteHealthAlert, trace: InvestigationTrace, observability: NoopObservability | OpenTelemetryObservability | None = None) -> InvestigationResult:
+def investigate_site(agent, alert: SiteHealthAlert, trace: InvestigationTrace, observability: NoopObservability | OpenTelemetryObservability | None = None, *, recursion_limit: int = 16) -> InvestigationResult:
     observability = observability or NoopObservability()
     started = time.monotonic()
     with observability.span("incident.site_investigation", {"incident.alert_kind": alert.symptom}) as span:
@@ -235,7 +235,7 @@ def investigate_site(agent, alert: SiteHealthAlert, trace: InvestigationTrace, o
             {
                 "messages": [{"role": "user", "content": "The owned disposable site has failed its health check. Investigate the cause and propose one bounded remediation."}],
             },
-            config={"configurable": {"thread_id": alert.idempotency_key}, "recursion_limit": 16},
+            config={"configurable": {"thread_id": alert.idempotency_key}, "recursion_limit": recursion_limit},
         )
         result = validate_investigation_result(output["structured_response"], alert.idempotency_key, trace)
         tool_calls = trace.tool_calls_for(alert.idempotency_key)

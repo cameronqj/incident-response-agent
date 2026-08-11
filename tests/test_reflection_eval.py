@@ -59,6 +59,14 @@ class FixedCritic:
         )
 
 
+class FixedReviser:
+    calls: int = 0
+
+    def revise(self, result, _critique, _observations):
+        self.calls += 1
+        return result.model_copy(update={"evidence_refs": ["resources-1", "logs-1"]})
+
+
 def _tool(name: str, call_id: str) -> AIMessage:
     return AIMessage(content="", tool_calls=[{"name": name, "args": {}, "id": call_id}])
 
@@ -103,14 +111,15 @@ def test_direct_eval_returns_json_serializable_trajectory():
 
 def test_reflection_runs_exactly_one_critique_and_removes_distractor():
     critic = FixedCritic()
+    reviser = FixedReviser()
     output = run_reflective_case("disk-with-cpu-and-deploy-distractors", ScriptedEvalModel(responses=[
         _tool("inspect_resources", "resources"),
         _tool("inspect_recent_changes", "changes"),
         _tool("inspect_recent_logs", "logs"),
         _result(["resources-1", "changes-1", "logs-1"]),
-        _result(["resources-1", "logs-1"]),
-    ]), critic)
+    ]), critic, reviser)
     assert critic.calls == 1
+    assert reviser.calls == 1
     assert output["critique_used"] is True
     assert output["evidence_refs"] == ["resources-1", "logs-1"]
     assert output["tool_calls"] == ["inspect_resources", "inspect_recent_changes", "inspect_recent_logs"]
