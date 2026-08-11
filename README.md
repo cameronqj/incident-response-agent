@@ -217,6 +217,8 @@ Open the Studio URL printed by the command and submit: `The owned disposable sit
 
 For `site-investigator-causal`, Studio pauses at `human_approval` with the exact proposal ID, revision, action hash, impact, risk, and preview. Resume with `approve` or `reject`; approval must echo those immutable identifiers before the existing application service can execute. Each Studio thread receives its own process-local disposable lab and SQLite store. This supports the local demonstration across an interrupt but does not claim recovery across Agent Server restarts.
 
+![LangSmith Studio showing the causal investigation, human approval, execution, and recovery graph](docs/assets/langsmith-studio-causal-approval-recovery.png)
+
 To retain the run in LangSmith instead, set `LANGSMITH_API_KEY` in the gitignored `.env` and launch with `LANGSMITH_TRACING=true ./scripts/studio.sh`.
 
 ![LangSmith Studio showing the site-investigator graph and its live diagnostic tool trace](docs/assets/langsmith-studio-site-investigation.png)
