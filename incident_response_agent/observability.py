@@ -57,6 +57,9 @@ class NoopObservability:
     def record_expirations(self, _count: int) -> None:
         return None
 
+    def record_investigation(self, _duration_ms: int, _tool_count: int, _result: str) -> None:
+        return None
+
     def instrument_fastapi(self, _app: FastAPI) -> None:
         return None
 
@@ -116,6 +119,12 @@ class OpenTelemetryObservability:
             unit="{proposal}",
             description="Proposals expired and retained",
         )
+        self.investigation_latency = meter.create_histogram(
+            "incident.investigation.duration", unit="ms", description="Deep Agent site investigation duration"
+        )
+        self.diagnostic_tools = meter.create_counter(
+            "incident.diagnostic_tool.count", unit="{tool}", description="Bounded diagnostic tool calls"
+        )
         self._shutdown_lock = Lock()
         self._shutdown = False
 
@@ -170,6 +179,11 @@ class OpenTelemetryObservability:
     def record_expirations(self, count: int) -> None:
         if count:
             self.expirations.add(count, {"incident.result": "expired"})
+
+    def record_investigation(self, duration_ms: int, tool_count: int, result: str) -> None:
+        attributes = {"incident.result": _safe_identifier(result)}
+        self.investigation_latency.record(duration_ms, attributes)
+        self.diagnostic_tools.add(tool_count, attributes)
 
     def instrument_fastapi(self, app: FastAPI) -> None:
         FastAPIInstrumentor.instrument_app(

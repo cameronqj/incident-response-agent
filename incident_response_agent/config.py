@@ -43,6 +43,7 @@ class Settings:
     lab_mode: str = "synthetic"
     base_url: str = "https://opencode.ai/zen/go/v1"
     model: str = "deepseek-v4-flash"
+    deep_agent_model: str = "qwen3.6-plus"
     api_key_env: str = "OPENCODE_KEY"
     model_timeout_seconds: float = 30.0
     model_max_retries: int = 2
@@ -71,6 +72,7 @@ class Settings:
             lab_mode=os.getenv("LAB_MODE", cls.lab_mode),
             base_url=os.getenv("MODEL_BASE_URL", cls.base_url),
             model=os.getenv("MODEL_NAME", cls.model),
+            deep_agent_model=os.getenv("DEEP_AGENT_MODEL_NAME", cls.deep_agent_model),
             api_key_env=os.getenv("MODEL_API_KEY_ENV", cls.api_key_env),
             model_timeout_seconds=float(os.getenv("MODEL_TIMEOUT_SECONDS", cls.model_timeout_seconds)),
             model_max_retries=int(os.getenv("MODEL_MAX_RETRIES", cls.model_max_retries)),

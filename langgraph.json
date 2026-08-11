@@ -1,0 +1,8 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "site-investigator": "./incident_response_agent/studio.py:graph",
+    "site-investigator-causal": "./incident_response_agent/studio_causal.py:graph"
+  },
+  "env": ".env"
+}

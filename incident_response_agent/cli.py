@@ -16,6 +16,17 @@ from .schemas import Decision, DecisionRequest, EventRequest
 from .service import IncidentService
 from .storage import SQLiteStore
 from .telemetry import DeterministicENOSPCTelemetry
+from .observability import build_observability
+from .site_investigation import (
+    DisposableSiteLab,
+    FixedInvestigationTelemetry,
+    InvestigationAnalyzer,
+    InvestigationTrace,
+    SiteHealthAlert,
+    create_incident_deep_agent,
+    create_live_investigation_model,
+    investigate_site,
+)
 
 
 def initialize_database(database_path: str) -> dict[str, str | int]:
@@ -98,11 +109,86 @@ def container_service_demo() -> None:
         service.close()
 
 
+def _site_investigation_demo(*, causal: bool) -> None:
+    settings = Settings.from_env()
+    sandbox = DisposableSandbox.create_runtime()
+    service = None
+    observability = build_observability(settings)
+    try:
+        lab = DisposableSiteLab.causal_disk_exhaustion(sandbox) if causal else DisposableSiteLab.disk_exhaustion(sandbox)
+        actor = "site-causal-demo" if causal else "site-unhealthy-demo"
+        trace = InvestigationTrace()
+        model = create_live_investigation_model(settings)
+        agent = create_incident_deep_agent(model, lab, trace, observability)
+        observed_at = datetime.now(timezone.utc)
+        alert = SiteHealthAlert(
+            idempotency_key=f"site-unhealthy-{observed_at.strftime('%Y%m%d%H%M%S%f')}",
+            observed_at=observed_at,
+        )
+        result = investigate_site(agent, alert, trace, observability)
+        evidence = lab.telemetry_for(result)
+        service = IncidentService(
+            SQLiteStore(":memory:"),
+            FixedInvestigationTelemetry(evidence),
+            InvestigationAnalyzer(result),
+            DisposableFilesystemExecutor(sandbox),
+            proposal_ttl_seconds=settings.proposal_ttl_seconds,
+            execution_enabled=True,
+            observability=observability,
+        )
+        run = service.start_event(
+            EventRequest.model_validate(
+                {
+                    "idempotency_key": alert.idempotency_key,
+                    "source": "local_simulation",
+                    "observed_at": observed_at,
+                    "payload": {"scenario": result.diagnosed_scenario.value, "summary": "site health investigation completed"},
+                }
+            ),
+            actor="deep-agent-investigator",
+        )
+        tool_calls = trace.tool_calls_for(alert.idempotency_key)
+        service.record_diagnostic_tools(run.run_id, tool_calls, "deep-agent-investigator")
+        assert run.proposal is not None
+        proposal = run.proposal
+        print(json.dumps({"phase": "investigated", "diagnosis": result.model_dump(mode="json"), "tool_calls": tool_calls, "proposal": proposal.model_dump(mode="json")}, indent=2))
+        response = input("Type approve to execute this exact bounded proposal: ").strip().lower()
+        decision = Decision.APPROVE if response == "approve" else Decision.REJECT
+        service.decide(proposal.proposal_id, DecisionRequest(decision=decision, revision=proposal.revision, action_hash=proposal.action_hash), actor=actor)
+        if decision == Decision.REJECT:
+            print(json.dumps({"phase": "rejected"}, indent=2))
+            return
+        completed = service.execute(proposal.proposal_id, actor=actor)
+        verification = lab.check_health()
+        service.record_recovery_verification(completed.run_id, proposal.proposal_id, verification.measurements["status_code"] == 200, actor)
+        print(json.dumps({"phase": "executed", "state": completed.state.value, "verification": verification.model_dump(mode="json")}, indent=2))
+    finally:
+        if service is not None:
+            service.close()
+        else:
+            observability.shutdown()
+        sandbox.close()
+
+
+def site_unhealthy_demo() -> None:
+    _site_investigation_demo(causal=False)
+
+
+def site_causal_demo() -> None:
+    _site_investigation_demo(causal=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="incident-response")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("demo", help="run the offline disk-exhaustion demo")
     subparsers.add_parser("container-service-demo", help="detect and restart one owned disposable service")
+    subparsers.add_parser("site-unhealthy-demo", help="use Deep Agents to investigate an ambiguous unhealthy disposable site")
+    subparsers.add_parser("site-causal-demo", help="use Deep Agents to distinguish causal evidence from concurrent signals")
+    reflection_parser = subparsers.add_parser("reflection-eval", help="compare direct and one-critique investigators on five synthetic cases")
+    reflection_parser.add_argument("--repetitions", type=int, default=1)
+    reflection_parser.add_argument("--mode", choices=["direct", "reflective", "both"], default="both")
+    reflection_parser.add_argument("--no-upload", action="store_true", help="run without retaining LangSmith experiment results")
     init_parser = subparsers.add_parser("init-db", help="create or migrate the SQLite database")
     init_parser.add_argument("--database-path", default=None)
     serve_parser = subparsers.add_parser("serve", help="run the FastAPI service")
@@ -114,6 +200,25 @@ def main() -> None:
         return
     if args.command == "container-service-demo":
         container_service_demo()
+        return
+    if args.command == "site-unhealthy-demo":
+        site_unhealthy_demo()
+        return
+    if args.command == "site-causal-demo":
+        site_causal_demo()
+        return
+    if args.command == "reflection-eval":
+        if args.repetitions < 1 or args.repetitions > 5:
+            parser.error("--repetitions must be between 1 and 5")
+        from .reflection_eval import run_langsmith_reflection_evaluation
+
+        result = run_langsmith_reflection_evaluation(
+            Settings.from_env(),
+            upload_results=not args.no_upload,
+            repetitions=args.repetitions,
+            mode=args.mode,
+        )
+        print(json.dumps(result, default=str, indent=2))
         return
     if args.command == "init-db":
         database_path = args.database_path or Settings.from_env().database_path

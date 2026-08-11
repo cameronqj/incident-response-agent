@@ -14,6 +14,7 @@ The goal is to demonstrate observable application behavior across a realistic mu
 - OTLP/HTTP export to a real disposable OpenTelemetry Collector, with strict attribute allowlists and secret-leakage regression tests.
 - Deterministic offline instrumentation tests plus separately labeled container and live-inference evidence.
 - A realistic workflow workload: synthetic disk, CPU, memory, restart-loop, and log-storm scenarios; bounded ENOSPC/OOM checks; and one real unhealthy disposable-service recovery cycle.
+- An opt-in Deep Agents path that starts from a generic site-health failure, gathers bounded evidence without receiving the injected scenario, and hands a validated diagnosis to the existing approval control plane.
 
 ## Signal coverage
 
@@ -37,6 +38,25 @@ flowchart LR
     API --> OTel[OpenTelemetry SDK]
     Workflow --> OTel
     OTel --> Collector[OTLP Collector]
+```
+
+The scenario-specific API and CLI paths are pre-triaged workflows. The separate Deep Agents path starts with only `site unhealthy`, uses the shortest useful sequence of read-only diagnostics, validates cited evidence and the proposed action deterministically, and then reuses the immutable proposal and execution machinery. The normal Deep Agents delegation and virtual-filesystem tools remain model-visible, while the state backend denies filesystem access and provides no shell execution capability.
+
+```mermaid
+flowchart LR
+    Alert["Generic alert: site unhealthy"] --> Agent["Deep Agent investigator"]
+    Agent --> Health["Check site health"]
+    Agent --> Resources["Inspect resources"]
+    Agent --> Changes["Inspect recent changes"]
+    Agent --> Logs["Inspect recent logs"]
+    Health --> Diagnosis["Structured diagnosis"]
+    Resources --> Diagnosis
+    Changes --> Diagnosis
+    Logs --> Diagnosis
+    Diagnosis --> Validation["Evidence and action validation"]
+    Validation --> Approval["Existing immutable proposal and approval"]
+    Approval --> Execution["Bounded execution and recovery verification"]
+    Permissions["No shell; virtual filesystem denied"] -. capability boundary .-> Agent
 ```
 
 The incident workflow provides enough branching, latency, failure, approval, and side-effect behavior to make telemetry meaningful. SQLite records the sanitized durable history; OpenTelemetry supplies operational traces and metrics. Both are correlated without exporting event bodies, prompts, evidence text, credentials, paths, or arbitrary model output.
@@ -83,6 +103,32 @@ The bootstrap script creates `.venv`, installs only into that environment, creat
 
 The CLI demo uses a process-owned temporary sandbox and deterministic fake model. It does not require a bearer token, container engine, network, or API key.
 
+To exercise Deep Agents against an ambiguous synthetic site failure, use the locally configured inference key:
+
+```bash
+.venv/bin/python -m incident_response_agent.cli site-unhealthy-demo
+```
+
+The command privately injects disk pressure and failed normal log rotation, but the agent receives only a generic health-check failure. It may inspect bounded site health, resources, recent changes, and sanitized recent-log signals. Deep Agents' delegation and virtual-filesystem tools remain model-visible, but deny-by-default permissions block filesystem paths and the state backend provides no shell execution capability. After investigation, the command displays the immutable proposal and waits for `approve`. `OPENCODE_KEY` is loaded from the gitignored local `.env` when present; its value is never printed or persisted.
+
+For the second multi-signal investigation experiment, run:
+
+```bash
+.venv/bin/python -m incident_response_agent.cli site-causal-demo
+```
+
+This profile adds elevated CPU and a recent successful deployment alongside the disk-pressure evidence. The agent must distinguish concurrent and merely recent signals from the ENOSPC log-rotation chain, then hand the same validated `cleanup_rotated_logs` proposal to the existing hash-bound approval and recovery workflow. It adds no model-visible remediation or shell capability.
+
+To compare a direct investigation with one bounded critique-and-revision cycle across five hidden-ground-truth cases, run:
+
+```bash
+.venv/bin/python -m incident_response_agent.cli reflection-eval --mode both --repetitions 1
+```
+
+The harness creates or reuses the versioned `incident-response-agent-reflection-eval-v1` LangSmith dataset and uploads two experiments. `--mode direct` or `--mode reflective` runs one side independently; `--no-upload` uses the same local cases and evaluators without retaining an experiment. The cases cover disk, CPU, memory, service-restart, and log-storm diagnoses with plausible distractors. LangSmith applies deterministic evaluators for diagnosis, action, causal-evidence precision, distractor rejection, required-tool coverage, and tool budget. The critique receives only observations already gathered by the agent and can trigger at most one tool-less revision; it cannot inspect hidden reference outputs or make additional diagnostic calls. See ADR 007 and `docs/evidence.md` for the measured one-run result and its limits.
+
+![LangSmith dataset experiments comparing direct and critique investigators](docs/assets/langsmith-reflection-evaluation.png)
+
 For a real disposable-service recovery cycle, use a bearer token and a working Podman/Docker engine. The command displays the immutable proposal and waits for `approve` before restarting anything:
 
 ```bash
@@ -97,6 +143,12 @@ Run the offline suite:
 
 ```bash
 .venv/bin/python -m pytest -m 'not integration and not live'
+```
+
+The offline suite scripts exact Deep Agent tool calls and structured output without network access. The opt-in live check verifies that the configured model supports the tool-calling contract:
+
+```bash
+RUN_LIVE_TESTS=1 .venv/bin/python -m pytest tests/test_site_investigation.py -m live
 ```
 
 ## Local API access
@@ -159,7 +211,27 @@ The optional live test exercises the configured OpenAI-compatible chat-completio
 RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live
 ```
 
-Defaults are base URL `https://opencode.ai/zen/go/v1`, model `deepseek-v4-flash`, and API-key environment variable `OPENCODE_KEY`. They remain configurable through `MODEL_BASE_URL`, `MODEL_NAME`, and `MODEL_API_KEY_ENV`. Live mode fails clearly when its key is absent and never falls back to fake inference.
+Defaults are base URL `https://opencode.ai/zen/go/v1`, legacy assessment model `deepseek-v4-flash`, Deep Agents model `qwen3.6-plus`, and API-key environment variable `OPENCODE_KEY`. They remain configurable through `MODEL_BASE_URL`, `MODEL_NAME`, `DEEP_AGENT_MODEL_NAME`, and `MODEL_API_KEY_ENV`. Live mode fails clearly when its key is absent and never falls back to fake inference.
+
+The Deep Agents path uses the same configurable endpoint and key through `langchain-openai`. Unlike the legacy single-call adapter, it requires model tool-calling support. Qwen thinking is disabled for this path because the provider does not accept Deep Agents' required structured tool choice in thinking mode. Passing the legacy chat-completions test therefore does not by itself establish Deep Agents compatibility.
+
+### Local LangSmith Studio
+
+The repository exports both the baseline `site-investigator` and the full multi-signal `site-investigator-causal` workflow through `langgraph.json`. The causal graph shows investigation, immutable proposal construction, a LangGraph human-approval interrupt, deterministic execution, and recovery verification in one resumable Studio thread. Studio can connect directly to the local Agent Server without a LangSmith credential or hosted trace retention:
+
+```bash
+./scripts/studio.sh
+```
+
+Open the Studio URL printed by the command and submit: `The owned disposable site has failed its health check. Investigate the cause and propose one bounded remediation.` The graph still calls the configured external inference endpoint, so `OPENCODE_KEY` is required; only LangSmith authentication and hosted tracing are disabled. The exported graph uses a process-owned synthetic sandbox and exposes no remediation or shell tool.
+
+For `site-investigator-causal`, Studio pauses at `human_approval` with the exact proposal ID, revision, action hash, impact, risk, and preview. Resume with `approve` or `reject`; approval must echo those immutable identifiers before the existing application service can execute. Each Studio thread receives its own process-local disposable lab and SQLite store. This supports the local demonstration across an interrupt but does not claim recovery across Agent Server restarts.
+
+![LangSmith Studio showing the causal investigation, human approval, execution, and recovery graph](docs/assets/langsmith-studio-causal-approval-recovery.png)
+
+To retain the run in LangSmith instead, set `LANGSMITH_API_KEY` in the gitignored `.env` and launch with `LANGSMITH_TRACING=true ./scripts/studio.sh`.
+
+![LangSmith Studio showing the site-investigator graph and its live diagnostic tool trace](docs/assets/langsmith-studio-site-investigation.png)
 
 Live provider responses are read through a 65,536-byte hard limit before parsing. Structured assessment summaries are limited to 2,000 characters, `evidence_refs` to 20 items of at most 500 characters each, and unknown fields are rejected.
 
