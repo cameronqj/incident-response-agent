@@ -98,7 +98,7 @@ The first slice deliberately stops before dynamic executable capabilities.
 9. Verify rejected, failed, or tampered candidates cannot be retrieved.
 10. Record reproducible offline evidence and keep live inference optional.
 
-This slice now includes a retained LangSmith before/after experiment. The first fresh investigation searches an empty approved registry; reviewed knowledge is then revised, gated, and promoted; a second fresh investigation searches and opens the immutable promoted version through read-only tools and returns its exact version and digest. Offline policy tests prove that unpromoted lifecycle states and tampered versions remain unavailable. See `docs/evidence.md` for the measured trajectory, latency, token, and evaluator comparison.
+This slice now includes a retained LangSmith before/after experiment. The first fresh investigation searches an empty approved registry; reviewed knowledge is then revised, gated, and promoted; a second fresh investigation searches and opens the immutable promoted version through read-only tools and returns its exact version and digest. The result proves governed retrieval and exact citation, not that the retrieved runbook improved an already-correct diagnosis. Offline policy tests prove that unpromoted lifecycle states and tampered versions remain unavailable. See `docs/evidence.md` for the measured trajectory, latency, token, and evaluator comparison and ADR 008 for the design decision.
 
 ## POC non-goals
 

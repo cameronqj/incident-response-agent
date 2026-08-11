@@ -126,15 +126,15 @@ The final runbook phase used the versioned `incident-response-agent-runbook-appl
 
 | Reproducible check | Command | Result |
 | --- | --- | --- |
-| Targeted application, citation, visibility, tamper, evaluator, and LangSmith-usage checks | `.venv/bin/python -m pytest tests/test_runbook_application_eval.py` | 7 passed |
-| Full offline regression | `.venv/bin/python -m pytest -m 'not integration and not live'` | 148 passed; 18 deselected |
+| Targeted application, full orchestration, citation, visibility, tamper, evaluator, and LangSmith-usage checks | `.venv/bin/python -m pytest tests/test_runbook_application_eval.py` | 8 passed |
+| Full offline regression | `.venv/bin/python -m pytest -m 'not integration and not live'` | 149 passed; 18 deselected |
 
 | Experiment | ID | Diagnosis | Required evidence | Distractor avoidance | Tool trajectory | Latency | Tokens | Exact runbook citation |
 | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: |
 | Before `runbook-before-learning-v1-d8b12276` | `150539c8-170b-452c-acb7-33f9980a97eb` | 1.00 | 1.00 | 0.00 | 4 diagnostic calls + search | 10,474 ms | 7,013 | 0.00 |
 | After `runbook-after-learning-v1-2bcf82f4` | `b337072c-0dfa-4549-b72d-c3d1286a8023` | 1.00 | 1.00 | 0.00 | 4 diagnostic calls + search + open | 12,692 ms | 10,837 | 1.00 |
 
-The later agent found, opened, and applied `worker-oom-under-high-concurrency` version 1, citing content digest `6f1c761692ff46037202546690fdee80539b089ab11197f84c5cddf140d220ec`. Its diagnosis remained correct and retained all required evidence. It also retained the generic health observation, so distractor avoidance did not improve. The explicit citation improved from 0 to 1 at the cost of one additional tool call, 2,218 ms, and 3,824 tokens in this single stochastic comparison.
+The later agent found, opened, and exactly cited `worker-oom-under-high-concurrency` version 1 with content digest `6f1c761692ff46037202546690fdee80539b089ab11197f84c5cddf140d220ec`. Its diagnosis remained correct and retained all required evidence. It also retained the generic health observation, so distractor avoidance did not improve and this run does not establish that retrieval improved or changed its reasoning. The explicit citation improved from 0 to 1 at the cost of one additional tool call, 2,218 ms, and 3,824 tokens in this single stochastic comparison.
 
 The offline visibility regression verifies that pending, rejected, superseded, and evaluation-failed candidates return no match; only the promoted immutable version is searchable; and direct or search-based access to a digest-tampered promoted record fails closed. A forged citation is also rejected unless the exact version was returned by search and opened in the same investigation thread.
 

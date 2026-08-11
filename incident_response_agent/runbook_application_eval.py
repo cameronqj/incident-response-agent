@@ -416,7 +416,7 @@ def run_runbook_application_evaluation(settings: Settings, *, upload_results: bo
         after_results = client.evaluate(
             target(learned_registry, require_runbook=True),
             experiment_prefix=AFTER_EXPERIMENT,
-            description="Fresh incident with search and explicit application of one reviewed, evaluated, promoted runbook.",
+            description="Fresh incident with search, open, and exact citation of one reviewed, evaluated, promoted runbook.",
             metadata={"phase": "after-learning", "model": settings.deep_agent_model, "runbook_version": promoted.version},
             **common,
         )

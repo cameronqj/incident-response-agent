@@ -10,6 +10,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
+import incident_response_agent.runbook_application_eval as application_eval
 from incident_response_agent.runbook_application_eval import (
     EVALUATORS,
     RunbookAwareDiagnosis,
@@ -23,7 +24,9 @@ from incident_response_agent.runbook_application_eval import (
     investigate_with_runbooks,
     required_diagnostic_coverage,
     required_evidence_recall,
+    run_runbook_application_evaluation,
 )
+from incident_response_agent.config import Settings
 from incident_response_agent.runbook_learning import (
     DeterministicRunbookEvaluator,
     PromotedRunbook,
@@ -32,6 +35,8 @@ from incident_response_agent.runbook_learning import (
     RunbookResearchProposal,
     RunbookReviewDecision,
     WorkerMemoryPressureLab,
+    proposal_digest,
+    simulated_reviewer_revision,
 )
 from incident_response_agent.site_investigation import InvestigationTrace
 
@@ -118,6 +123,14 @@ def _diagnostic_responses() -> list[AIMessage]:
         _tool("inspect_recent_changes"),
         _tool("inspect_recent_logs"),
     ]
+
+
+def _research_message(proposal: RunbookResearchProposal) -> AIMessage:
+    return AIMessage(content="", tool_calls=[{
+        "name": "RunbookResearchProposal",
+        "args": proposal.model_dump(mode="json"),
+        "id": "research-proposal",
+    }])
 
 
 def test_before_learning_investigation_searches_empty_registry_without_citation():
@@ -267,3 +280,59 @@ def test_trace_usage_resolves_persisted_run_from_evaluation_runtree():
 
     usage = _trace_usage(FakeClient(), SimpleNamespace(id="root-id"))
     assert usage == {"latency_ms": 125, "total_tokens": 150, "total_cost": 0.01}
+
+
+def test_complete_orchestration_runs_before_research_promotion_and_fresh_after(monkeypatch):
+    proposal = _proposal()
+    reviewed = simulated_reviewer_revision(proposal)
+    citation = RunbookCitation(
+        runbook_id=reviewed.problem_signature,
+        version=1,
+        content_digest=proposal_digest(reviewed),
+    )
+    models = iter([
+        ScriptedApplicationModel(responses=[*_diagnostic_responses(), _tool("search_approved_runbooks"), _diagnosis_message(None)]),
+        ScriptedApplicationModel(responses=[*_diagnostic_responses(), _research_message(proposal)]),
+        ScriptedApplicationModel(responses=[
+            *_diagnostic_responses(),
+            _tool("search_approved_runbooks"),
+            _tool("open_approved_runbook", {"runbook_id": citation.runbook_id, "version": citation.version}),
+            _diagnosis_message(citation),
+        ]),
+    ])
+    monkeypatch.setattr(application_eval, "create_live_investigation_model", lambda _settings: next(models))
+
+    class FakeResults(list):
+        def __init__(self, row, experiment_prefix):
+            super().__init__([row])
+            self.experiment_name = experiment_prefix
+            self.experiment_id = f"{experiment_prefix}-id"
+            self.url = None
+
+    class FakeClient:
+        prefixes: list[str] = []
+
+        def evaluate(self, target, *, data, evaluators, experiment_prefix, **kwargs):
+            assert kwargs["upload_results"] is False
+            example = list(data)[0]
+            outputs = target(example.inputs)
+            evaluations = [
+                SimpleNamespace(key=evaluator.__name__, score=evaluator(example.inputs, outputs, example.outputs))
+                for evaluator in evaluators
+            ]
+            run = SimpleNamespace(outputs=outputs, error=None, total_tokens=None, total_cost=None)
+            self.prefixes.append(experiment_prefix)
+            return FakeResults({
+                "run": run,
+                "example": example,
+                "evaluation_results": {"results": evaluations},
+            }, experiment_prefix)
+
+    fake_client = FakeClient()
+    monkeypatch.setattr(application_eval, "Client", lambda: fake_client)
+    result = run_runbook_application_evaluation(Settings(), upload_results=False)
+
+    assert fake_client.prefixes == [application_eval.BEFORE_EXPERIMENT, application_eval.AFTER_EXPERIMENT]
+    assert result["promotion"]["evaluation"]["passed"] is True
+    assert result["after"]["cases"][0]["runbook_citation"] == citation.model_dump(mode="json")
+    assert result["after_minus_before"]["explicit_runbook_citation"] == 1.0
