@@ -178,6 +178,60 @@ def site_causal_demo() -> None:
     _site_investigation_demo(causal=True)
 
 
+def runbook_learning_demo(database_path: str, decision: str) -> None:
+    from .runbook_learning import (
+        DeterministicRunbookEvaluator,
+        PromotedRunbook,
+        RunbookRegistry,
+        RunbookReviewDecision,
+        WorkerMemoryPressureLab,
+        create_runbook_research_agent,
+        research_runbook,
+        simulated_reviewer_revision,
+    )
+
+    settings = Settings.from_env()
+    trace = InvestigationTrace()
+    thread_id = f"runbook-learning-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}"
+    proposal = research_runbook(
+        create_runbook_research_agent(create_live_investigation_model(settings), WorkerMemoryPressureLab(), trace),
+        trace,
+        thread_id,
+    )
+    registry = RunbookRegistry(database_path)
+    try:
+        candidate = registry.submit(proposal)
+        print(json.dumps({"phase": "candidate", "reviewer_kind": "simulated_human", "candidate": candidate.model_dump(mode="json")}, indent=2))
+        if decision == "revise-approve":
+            candidate = registry.revise(
+                candidate.candidate_id,
+                simulated_reviewer_revision(candidate.proposal),
+                actor="simulated-sre-reviewer",
+                note="Removed generic health and normal-state observations from the reusable applicability contract.",
+            )
+            print(json.dumps({"phase": "revised_candidate", "reviewer_kind": "simulated_human", "candidate": candidate.model_dump(mode="json")}, indent=2))
+            decision = "approve"
+        reviewed = registry.review(
+            candidate.candidate_id,
+            RunbookReviewDecision(decision),
+            actor="simulated-sre-reviewer",
+            evaluator=DeterministicRunbookEvaluator(),
+            note="POC decision supplied by --simulate-review; no Studio approval used.",
+        )
+        output: dict[str, object] = {"phase": reviewed.state.value if hasattr(reviewed, "state") else "promoted", "review": reviewed.model_dump(mode="json")}
+        if isinstance(reviewed, PromotedRunbook):
+            observations = trace.observations_for(thread_id).values()
+            signals = {signal for observation in observations for signal in observation.signals}
+            categories = {observation.category for observation in trace.observations_for(thread_id).values()}
+            output["later_incident_retrieval"] = [
+                {"runbook_id": match.runbook_id, "version": match.version, "title": match.proposal.title}
+                for match in registry.find_applicable(signals, categories)
+            ]
+        print(json.dumps(output, indent=2))
+    finally:
+        registry.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="incident-response")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -189,6 +243,11 @@ def main() -> None:
     reflection_parser.add_argument("--repetitions", type=int, default=1)
     reflection_parser.add_argument("--mode", choices=["direct", "reflective", "both"], default="both")
     reflection_parser.add_argument("--no-upload", action="store_true", help="run without retaining LangSmith experiment results")
+    runbook_parser = subparsers.add_parser("runbook-learning-demo", help="research and evaluate one runbook with a simulated application reviewer")
+    runbook_parser.add_argument("--database-path", default=".data/runbook-learning.sqlite3")
+    runbook_parser.add_argument("--simulate-review", choices=["approve", "reject", "revise-approve"], default="revise-approve")
+    runbook_eval_parser = subparsers.add_parser("runbook-application-eval", help="compare a fresh incident before and after governed runbook promotion")
+    runbook_eval_parser.add_argument("--no-upload", action="store_true", help="run without retaining LangSmith experiment results")
     init_parser = subparsers.add_parser("init-db", help="create or migrate the SQLite database")
     init_parser.add_argument("--database-path", default=None)
     serve_parser = subparsers.add_parser("serve", help="run the FastAPI service")
@@ -218,6 +277,15 @@ def main() -> None:
             repetitions=args.repetitions,
             mode=args.mode,
         )
+        print(json.dumps(result, default=str, indent=2))
+        return
+    if args.command == "runbook-learning-demo":
+        runbook_learning_demo(args.database_path, args.simulate_review)
+        return
+    if args.command == "runbook-application-eval":
+        from .runbook_application_eval import run_runbook_application_evaluation
+
+        result = run_runbook_application_evaluation(Settings.from_env(), upload_results=not args.no_upload)
         print(json.dumps(result, default=str, indent=2))
         return
     if args.command == "init-db":

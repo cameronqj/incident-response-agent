@@ -129,6 +129,26 @@ The harness creates or reuses the versioned `incident-response-agent-reflection-
 
 ![LangSmith dataset experiments comparing direct and critique investigators](docs/assets/langsmith-reflection-evaluation.png)
 
+### Governed runbook learning
+
+The separate runbook-learning POC investigates an unfamiliar disposable worker-memory failure, persists a structured knowledge candidate, and sends it through an application-owned review and deterministic promotion gate. It does not use Studio for approval and it cannot add executable authority. For a live demonstration with an explicitly simulated reviewer:
+
+```bash
+.venv/bin/python -m incident_response_agent.cli runbook-learning-demo \
+  --database-path .data/runbook-learning.sqlite3 \
+  --simulate-review revise-approve
+```
+
+The original model proposal remains immutable. The simulated reviewer creates a linked revision that removes generic symptoms from the reusable match contract, approves evaluation, and promotes the revision only if it passes all hidden positive and distractor cases. The command then simulates a later incident retrieving the promoted version. Use `--simulate-review approve` to demonstrate that human approval alone cannot bypass a failing gate, or `reject` to demonstrate terminal rejection. See [`docs/full-sre-agent.md`](docs/full-sre-agent.md) for the high-level path from governed runbook learning to separately reviewed executable capability promotion.
+
+To compare a fresh Deep Agent investigation before and after that governed promotion, run:
+
+```bash
+.venv/bin/python -m incident_response_agent.cli runbook-application-eval
+```
+
+The command creates two LangSmith experiments over the same unfamiliar incident. The baseline has an empty approved registry; the second run gets a fresh agent and exposes only two additional read-only tools: `search_approved_runbooks` and `open_approved_runbook`. Between runs, a simulated application reviewer revises and promotes the candidate through the hidden five-case gate. The learned run must open the returned immutable version and cite its exact content digest. Pending, rejected, superseded, evaluation-failed, and digest-tampered records are not visible through the tools. Add `--no-upload` for the same live-model comparison without retaining LangSmith experiments; the automated suite separately covers the complete orchestration with scripted models.
+
 For a real disposable-service recovery cycle, use a bearer token and a working Podman/Docker engine. The command displays the immutable proposal and waits for `approve` before restarting anything:
 
 ```bash

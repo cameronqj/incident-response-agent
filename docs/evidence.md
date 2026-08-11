@@ -104,3 +104,38 @@ The LangSmith capture below shows the versioned dataset's experiment table, dete
 The first critique produced no measurable change. Inspection showed that its rubric accepted observations used only to rule out alternatives. The refined version requests a per-citation causal classification and derives the revision decision in code. A partial v2 run scored four cases successfully but failed one incomplete structured classification; a later attempt exposed provider calls exceeding the normal 30-second interactive timeout. The final v4 experiment conservatively retains missing classifications and uses an evaluation-only 120-second request timeout. It completed in approximately 14 minutes.
 
 In this one-run comparison, the reflective configuration scored 0.25 higher on evidence precision and 0.60 higher on distractor rejection without a difference in diagnosis, action, trajectory coverage, or tool-budget scores. Because the direct and reflective targets are separate stochastic investigations and v4 did not retain its pre-critique citations, this result does not isolate the critique as the cause of the difference. Subsequent runs record initial and final citations plus whether revision was applied for same-run inspection. This is not evidence of statistical significance, an official AIOps benchmark, production incident performance, autonomous prompt improvement, or lower latency/cost. Reproduce with `.venv/bin/python -m incident_response_agent.cli reflection-eval --mode both --repetitions 1`; live model output and duration may vary.
+
+## 2026-08-11 governed runbook-learning POC
+
+This discrete knowledge-promotion path uses application-owned review methods and SQLite rather than Studio approval. Tests simulate a human actor through the same `review` and `revise` methods a future trusted CLI or API would call. Promotion changes only the approved runbook registry; it does not add an executable action or modify the remediation whitelist.
+
+| Evidence | Command | Result | Scenario kind |
+| --- | --- | --- | --- |
+| Targeted offline research, review, evaluation, persistence, reuse, and tamper checks | `.venv/bin/python -m pytest tests/test_runbook_learning.py` | 9 passed | `synthetic_marker` |
+| Full offline regression | `.venv/bin/python -m pytest -m 'not integration and not live'` | 141 passed; 18 deselected | `synthetic_marker` plus container-policy simulation |
+| Live runbook research with direct simulated approval | `.venv/bin/python -m incident_response_agent.cli runbook-learning-demo --database-path .data/runbook-learning-evidence.sqlite3 --simulate-review approve` | candidate retained as `evaluation_failed`; 0.60 case accuracy | live inference over `synthetic_marker` evidence |
+| Live research, simulated reviewer revision, promotion, and later retrieval | `.venv/bin/python -m incident_response_agent.cli runbook-learning-demo --database-path .data/runbook-learning-evidence.sqlite3 --simulate-review revise-approve` | revision passed 5/5 cases, promoted version 1, then retrieved | live inference over `synthetic_marker` evidence |
+
+The live `qwen3.6-plus` researcher inspected health, resources, recent changes, and bounded logs without receiving the private problem signature. Its first candidate correctly connected increased worker concurrency, 96 percent memory pressure, and correlated OOM kills, but made generic HTTP 503 and worker-unavailable symptoms mandatory applicability signals. Simulated approval did not override the gate: two positive cases failed to match. A second live candidate showed the same overly strict shape; the simulated reviewer preserved it as `superseded`, created a digest-bound revision containing only the causal applicability signals and evidence categories, and approved that revision for evaluation. The revision matched both positive cases, rejected all three distractors, was promoted as version 1, and was returned for a later incident with the same causal signals.
+
+This demonstrates one human-governed knowledge-learning loop: research, immutable proposal, review edit, hidden evaluation, versioned promotion, persistence, and reuse. The reviewer is simulated, the cases are small and synthetic, and the later incident reuses the same fixture signals. It does not demonstrate autonomous learning, production telemetry access, general runbook quality, executable capability promotion, or safe production remediation.
+
+## 2026-08-11 promoted-runbook application experiment
+
+The final runbook phase used the versioned `incident-response-agent-runbook-application-v1` LangSmith dataset and two fresh Deep Agent investigations over the same unfamiliar worker-memory incident. The baseline registry was empty. Between runs, a separately invoked live researcher proposed a candidate, the simulated application reviewer created a linked revision, and the deterministic five-case gate promoted version 1. The second agent could access the promoted registry only through the read-only `search_approved_runbooks` and `open_approved_runbook` tools.
+
+| Reproducible check | Command | Result |
+| --- | --- | --- |
+| Targeted application, full orchestration, citation, visibility, tamper, evaluator, and LangSmith-usage checks | `.venv/bin/python -m pytest tests/test_runbook_application_eval.py` | 8 passed |
+| Full offline regression | `.venv/bin/python -m pytest -m 'not integration and not live'` | 149 passed; 18 deselected |
+
+| Experiment | ID | Diagnosis | Required evidence | Distractor avoidance | Tool trajectory | Latency | Tokens | Exact runbook citation |
+| --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: |
+| Before `runbook-before-learning-v1-d8b12276` | `150539c8-170b-452c-acb7-33f9980a97eb` | 1.00 | 1.00 | 0.00 | 4 diagnostic calls + search | 10,474 ms | 7,013 | 0.00 |
+| After `runbook-after-learning-v1-2bcf82f4` | `b337072c-0dfa-4549-b72d-c3d1286a8023` | 1.00 | 1.00 | 0.00 | 4 diagnostic calls + search + open | 12,692 ms | 10,837 | 1.00 |
+
+The later agent found, opened, and exactly cited `worker-oom-under-high-concurrency` version 1 with content digest `6f1c761692ff46037202546690fdee80539b089ab11197f84c5cddf140d220ec`. Its diagnosis remained correct and retained all required evidence. It also retained the generic health observation, so distractor avoidance did not improve and this run does not establish that retrieval improved or changed its reasoning. The explicit citation improved from 0 to 1 at the cost of one additional tool call, 2,218 ms, and 3,824 tokens in this single stochastic comparison.
+
+The offline visibility regression verifies that pending, rejected, superseded, and evaluation-failed candidates return no match; only the promoted immutable version is searchable; and direct or search-based access to a digest-tampered promoted record fails closed. A forged citation is also rejected unless the exact version was returned by search and opened in the same investigation thread.
+
+One earlier after-learning attempt retrieved and opened the correct version but the provider encoded a nested structured-output citation as a JSON string. Deep Agents retried the invalid output until its recursion limit. The provider-facing schema now uses three flat citation fields and reconstructs the typed citation at the application boundary; the regression suite covers that contract. This evidence demonstrates reviewed knowledge affecting a later Deep Agent trajectory, not statistically significant quality improvement, production incident learning, or executable authority.
