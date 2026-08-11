@@ -185,6 +185,9 @@ def main() -> None:
     subparsers.add_parser("container-service-demo", help="detect and restart one owned disposable service")
     subparsers.add_parser("site-unhealthy-demo", help="use Deep Agents to investigate an ambiguous unhealthy disposable site")
     subparsers.add_parser("site-causal-demo", help="use Deep Agents to distinguish causal evidence from concurrent signals")
+    reflection_parser = subparsers.add_parser("reflection-eval", help="compare direct and one-critique investigators on five synthetic cases")
+    reflection_parser.add_argument("--repetitions", type=int, default=1)
+    reflection_parser.add_argument("--no-upload", action="store_true", help="run without retaining LangSmith experiment results")
     init_parser = subparsers.add_parser("init-db", help="create or migrate the SQLite database")
     init_parser.add_argument("--database-path", default=None)
     serve_parser = subparsers.add_parser("serve", help="run the FastAPI service")
@@ -202,6 +205,18 @@ def main() -> None:
         return
     if args.command == "site-causal-demo":
         site_causal_demo()
+        return
+    if args.command == "reflection-eval":
+        if args.repetitions < 1 or args.repetitions > 5:
+            parser.error("--repetitions must be between 1 and 5")
+        from .reflection_eval import run_langsmith_reflection_evaluation
+
+        result = run_langsmith_reflection_evaluation(
+            Settings.from_env(),
+            upload_results=not args.no_upload,
+            repetitions=args.repetitions,
+        )
+        print(json.dumps(result, default=str, indent=2))
         return
     if args.command == "init-db":
         database_path = args.database_path or Settings.from_env().database_path

@@ -13,6 +13,7 @@ dependencies = [
   "deepagents>=0.7.5,<0.8",
   "fastapi>=0.115,<1",
   "langchain-openai>=1.4.3,<2",
+  "langsmith>=0.10.17,<0.11",
   "opentelemetry-api>=1.44,<2",
   "opentelemetry-exporter-otlp-proto-http>=1.44,<2",
   "opentelemetry-instrumentation-fastapi>=0.65b0,<1",
