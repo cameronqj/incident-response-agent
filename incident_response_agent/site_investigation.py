@@ -159,7 +159,7 @@ SERVICE_SUBAGENT = {
 }
 
 
-def create_incident_deep_agent(model: BaseChatModel, target: SiteDiagnosticTarget, trace: InvestigationTrace, observability: NoopObservability | OpenTelemetryObservability | None = None):
+def create_incident_deep_agent(model: BaseChatModel, target: SiteDiagnosticTarget, trace: InvestigationTrace, observability: NoopObservability | OpenTelemetryObservability | None = None, *, platform_managed_checkpointing: bool = False):
     tools = build_diagnostic_tools(target, trace, observability)
     subagents = [
         {**RESOURCE_SUBAGENT, "tools": [tools[1]]},
@@ -175,7 +175,7 @@ def create_incident_deep_agent(model: BaseChatModel, target: SiteDiagnosticTarge
         permissions=[
             FilesystemPermission(operations=["read", "write"], paths=["/**"], mode="deny"),
         ],
-        checkpointer=InMemorySaver(),
+        checkpointer=None if platform_managed_checkpointing else InMemorySaver(),
     )
 
 

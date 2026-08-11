@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "site-investigator": "./incident_response_agent/studio.py:graph"
+  },
+  "env": ".env"
+}

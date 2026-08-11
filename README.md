@@ -195,6 +195,16 @@ Defaults are base URL `https://opencode.ai/zen/go/v1`, legacy assessment model `
 
 The Deep Agents path uses the same configurable endpoint and key through `langchain-openai`. Unlike the legacy single-call adapter, it requires model tool-calling support. Qwen thinking is disabled for this path because the provider does not accept Deep Agents' required structured tool choice in thinking mode. Passing the legacy chat-completions test therefore does not by itself establish Deep Agents compatibility.
 
+### Local LangSmith Studio
+
+The repository exports the synthetic site investigator through `langgraph.json` for interactive graph and tool-call visualization. Studio can connect directly to the local Agent Server without a LangSmith credential or hosted trace retention:
+
+```bash
+./scripts/studio.sh
+```
+
+Open the Studio URL printed by the command and submit: `The owned disposable site has failed its health check. Investigate the cause and propose one bounded remediation.` The graph still calls the configured external inference endpoint, so `OPENCODE_KEY` is required; only LangSmith authentication and hosted tracing are disabled. The exported graph uses a process-owned synthetic sandbox and exposes no remediation or shell tool.
+
 Live provider responses are read through a 65,536-byte hard limit before parsing. Structured assessment summaries are limited to 2,000 characters, `evidence_refs` to 20 items of at most 500 characters each, and unknown fields are rejected.
 
 The combined real-model/real-service cycle is separately opt-in:

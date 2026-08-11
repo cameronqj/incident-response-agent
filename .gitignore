@@ -10,6 +10,7 @@ coverage.xml
 .mypy_cache/
 .ruff_cache/
 .data/
+.langgraph_api/
 *.db
 *.sqlite3
 .incident-sandbox/
