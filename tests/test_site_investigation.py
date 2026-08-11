@@ -5,7 +5,6 @@ import os
 import shutil
 import subprocess
 from typing import Any, Sequence
-from unittest.mock import patch
 
 import pytest
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -20,7 +19,6 @@ from incident_response_agent.sandbox import DisposableSandbox
 from incident_response_agent.schemas import Decision, DecisionRequest, EventRequest
 from incident_response_agent.service import IncidentService
 from incident_response_agent.site_investigation import (
-    DeepSeekCompatibleChatOpenAI,
     DisposableSiteLab,
     FixedInvestigationTelemetry,
     InvestigationAnalyzer,
@@ -96,16 +94,14 @@ def test_diagnostics_expose_symptoms_not_hidden_ground_truth(tmp_path):
         sandbox.close()
 
 
-def test_live_model_factory_omits_forced_tool_choice_and_masks_key(monkeypatch):
+def test_live_model_factory_uses_qwen_non_thinking_mode_and_masks_key(monkeypatch):
     from incident_response_agent.config import Settings
     from incident_response_agent.site_investigation import create_live_investigation_model
 
     monkeypatch.setenv("TEST_DEEP_AGENT_KEY", "model-key-secret-canary")
     model = create_live_investigation_model(Settings(api_key_env="TEST_DEEP_AGENT_KEY"))
-    assert isinstance(model, DeepSeekCompatibleChatOpenAI)
-    with patch("langchain_openai.ChatOpenAI.bind_tools", return_value="bound") as bind_tools:
-        assert model.bind_tools([], tool_choice="any") == "bound"
-        assert "tool_choice" not in bind_tools.call_args.kwargs
+    assert model.model_name == "qwen3.6-plus"
+    assert model.extra_body == {"enable_thinking": False}
     assert "model-key-secret-canary" not in repr(model)
 
 

@@ -176,9 +176,9 @@ The optional live test exercises the configured OpenAI-compatible chat-completio
 RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live
 ```
 
-Defaults are base URL `https://opencode.ai/zen/go/v1`, model `deepseek-v4-flash`, and API-key environment variable `OPENCODE_KEY`. They remain configurable through `MODEL_BASE_URL`, `MODEL_NAME`, and `MODEL_API_KEY_ENV`. Live mode fails clearly when its key is absent and never falls back to fake inference.
+Defaults are base URL `https://opencode.ai/zen/go/v1`, legacy assessment model `deepseek-v4-flash`, Deep Agents model `qwen3.6-plus`, and API-key environment variable `OPENCODE_KEY`. They remain configurable through `MODEL_BASE_URL`, `MODEL_NAME`, `DEEP_AGENT_MODEL_NAME`, and `MODEL_API_KEY_ENV`. Live mode fails clearly when its key is absent and never falls back to fake inference.
 
-The Deep Agents path uses the same configurable endpoint and key through `langchain-openai`. Unlike the legacy single-call adapter, it requires model tool-calling support. Passing the legacy chat-completions test therefore does not by itself establish Deep Agents compatibility.
+The Deep Agents path uses the same configurable endpoint and key through `langchain-openai`. Unlike the legacy single-call adapter, it requires model tool-calling support. Qwen thinking is disabled for this path because the provider does not accept Deep Agents' required structured tool choice in thinking mode. Passing the legacy chat-completions test therefore does not by itself establish Deep Agents compatibility.
 
 Live provider responses are read through a 65,536-byte hard limit before parsing. Structured assessment summaries are limited to 2,000 characters, `evidence_refs` to 20 items of at most 500 characters each, and unknown fields are rejected.
 

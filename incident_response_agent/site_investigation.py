@@ -185,24 +185,15 @@ def create_live_investigation_model(settings: Settings) -> ChatOpenAI:
     api_key = os.getenv(settings.api_key_env)
     if not api_key:
         raise ValueError(f"{settings.api_key_env} is required for the Deep Agents investigation demo")
-    return DeepSeekCompatibleChatOpenAI(
-        model=settings.model,
+    return ChatOpenAI(
+        model=settings.deep_agent_model,
         base_url=settings.base_url,
         api_key=api_key,
         timeout=settings.model_timeout_seconds,
         max_retries=settings.model_max_retries,
         temperature=0,
+        extra_body={"enable_thinking": False},
     )
-
-
-class DeepSeekCompatibleChatOpenAI(ChatOpenAI):
-    """Omit forced tool choice, which DeepSeek V4 thinking mode rejects."""
-
-    def bind_tools(self, tools, **kwargs):
-        tool_choice = kwargs.get("tool_choice")
-        if isinstance(tool_choice, dict) or tool_choice in ("any", "required", True):
-            kwargs.pop("tool_choice", None)
-        return super().bind_tools(tools, **kwargs)
 
 
 def investigate_site(agent, alert: SiteHealthAlert, trace: InvestigationTrace, observability: NoopObservability | OpenTelemetryObservability | None = None) -> InvestigationResult:

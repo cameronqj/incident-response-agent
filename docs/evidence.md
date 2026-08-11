@@ -53,16 +53,16 @@ This proves configured OpenAI-compatible assessment in both the disk flow and a 
 
 The offline checks use a scripted tool-calling chat model through the real `create_deep_agent` harness. They verify bounded diagnostic tools, absence of the hidden scenario in observations, observed-evidence citation enforcement, deterministic action compatibility, no shell exposure, handoff to hash-bound approval, recovery verification, and content-free OTel attributes. This proves harness integration and deterministic trajectory behavior, not live-model reliability or real-host diagnosis.
 
-The container-marked check runs the approved cleanup through the existing hardened container executor and verifies recovery. DeepSeek V4 thinking mode rejects forced tool choice, so the live adapter omits only that request parameter while retaining thinking and the normal Deep Agents tool surface. The state backend and permissions still deny filesystem access and expose no shell. The fixture now provides one clear chain—disk pressure followed by failed rotation—so a useful investigation can stop after resource and recent-log evidence.
+The container-marked check runs the approved cleanup through the existing hardened container executor and verifies recovery. A native `qwen3.6-plus` probe confirmed that thinking mode also rejects forced tool choice at this endpoint; using Qwen's non-thinking request setting accepts Deep Agents' normal structured tool choice without a custom binding adapter. The state backend and permissions still deny filesystem access and expose no shell. The fixture provides one clear chain—disk pressure followed by failed rotation—so a useful investigation can stop after a small evidence set.
 
 ### Live-inference observation
 
 - Endpoint label: `configured-openai-compatible-deep-agent`
 - Configured endpoint: `https://opencode.ai/zen/go/v1`
-- Model: `deepseek-v4-flash`
+- Model: `qwen3.6-plus`
 - Real external model: yes
 - Result: diagnosed `disk-exhaustion` and selected `cleanup_rotated_logs`
-- Provider adaptation: omit forced `tool_choice`; retain DeepSeek thinking mode and tool schemas
-- Observed variability: forced tool choice produced a provider error; once omitted, the native Deep Agents surface completed the investigation. The dated pass counts above describe the prior verified snapshot and are not silently rewritten by this refinement.
+- Provider configuration: `enable_thinking=false`; retain Deep Agents' native tool binding
+- Observed variability: Qwen thinking mode rejected required tool choice; non-thinking mode completed with `check_site_health`, `inspect_recent_logs`, and `inspect_resources` and returned the expected diagnosis.
 
 This proves one successful live Deep Agents investigation against the configured endpoint and the complete existing live regression. It does not prove deterministic diagnosis, general provider compatibility, safe arbitrary shell access, production-host inspection, or autonomous remediation.
