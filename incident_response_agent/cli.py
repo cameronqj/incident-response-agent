@@ -109,13 +109,14 @@ def container_service_demo() -> None:
         service.close()
 
 
-def site_unhealthy_demo() -> None:
+def _site_investigation_demo(*, causal: bool) -> None:
     settings = Settings.from_env()
     sandbox = DisposableSandbox.create_runtime()
     service = None
     observability = build_observability(settings)
     try:
-        lab = DisposableSiteLab.disk_exhaustion(sandbox)
+        lab = DisposableSiteLab.causal_disk_exhaustion(sandbox) if causal else DisposableSiteLab.disk_exhaustion(sandbox)
+        actor = "site-causal-demo" if causal else "site-unhealthy-demo"
         trace = InvestigationTrace()
         model = create_live_investigation_model(settings)
         agent = create_incident_deep_agent(model, lab, trace, observability)
@@ -153,13 +154,13 @@ def site_unhealthy_demo() -> None:
         print(json.dumps({"phase": "investigated", "diagnosis": result.model_dump(mode="json"), "tool_calls": tool_calls, "proposal": proposal.model_dump(mode="json")}, indent=2))
         response = input("Type approve to execute this exact bounded proposal: ").strip().lower()
         decision = Decision.APPROVE if response == "approve" else Decision.REJECT
-        service.decide(proposal.proposal_id, DecisionRequest(decision=decision, revision=proposal.revision, action_hash=proposal.action_hash), actor="site-unhealthy-demo")
+        service.decide(proposal.proposal_id, DecisionRequest(decision=decision, revision=proposal.revision, action_hash=proposal.action_hash), actor=actor)
         if decision == Decision.REJECT:
             print(json.dumps({"phase": "rejected"}, indent=2))
             return
-        completed = service.execute(proposal.proposal_id, actor="site-unhealthy-demo")
+        completed = service.execute(proposal.proposal_id, actor=actor)
         verification = lab.check_health()
-        service.record_recovery_verification(completed.run_id, proposal.proposal_id, verification.measurements["status_code"] == 200, "site-unhealthy-demo")
+        service.record_recovery_verification(completed.run_id, proposal.proposal_id, verification.measurements["status_code"] == 200, actor)
         print(json.dumps({"phase": "executed", "state": completed.state.value, "verification": verification.model_dump(mode="json")}, indent=2))
     finally:
         if service is not None:
@@ -169,12 +170,21 @@ def site_unhealthy_demo() -> None:
         sandbox.close()
 
 
+def site_unhealthy_demo() -> None:
+    _site_investigation_demo(causal=False)
+
+
+def site_causal_demo() -> None:
+    _site_investigation_demo(causal=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="incident-response")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("demo", help="run the offline disk-exhaustion demo")
     subparsers.add_parser("container-service-demo", help="detect and restart one owned disposable service")
     subparsers.add_parser("site-unhealthy-demo", help="use Deep Agents to investigate an ambiguous unhealthy disposable site")
+    subparsers.add_parser("site-causal-demo", help="use Deep Agents to distinguish causal evidence from concurrent signals")
     init_parser = subparsers.add_parser("init-db", help="create or migrate the SQLite database")
     init_parser.add_argument("--database-path", default=None)
     serve_parser = subparsers.add_parser("serve", help="run the FastAPI service")
@@ -189,6 +199,9 @@ def main() -> None:
         return
     if args.command == "site-unhealthy-demo":
         site_unhealthy_demo()
+        return
+    if args.command == "site-causal-demo":
+        site_causal_demo()
         return
     if args.command == "init-db":
         database_path = args.database_path or Settings.from_env().database_path
