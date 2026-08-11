@@ -127,6 +127,8 @@ To compare a direct investigation with one bounded critique-and-revision cycle a
 
 The harness creates or reuses the versioned `incident-response-agent-reflection-eval-v1` LangSmith dataset and uploads two experiments. `--mode direct` or `--mode reflective` runs one side independently; `--no-upload` uses the same local cases and evaluators without retaining an experiment. The cases cover disk, CPU, memory, service-restart, and log-storm diagnoses with plausible distractors. LangSmith applies deterministic evaluators for diagnosis, action, causal-evidence precision, distractor rejection, required-tool coverage, and tool budget. The critique receives only observations already gathered by the agent and can trigger at most one tool-less revision; it cannot inspect hidden reference outputs or make additional diagnostic calls. See ADR 007 and `docs/evidence.md` for the measured one-run result and its limits.
 
+![LangSmith dataset experiments comparing direct and critique investigators](docs/assets/langsmith-reflection-evaluation.png)
+
 For a real disposable-service recovery cycle, use a bearer token and a working Podman/Docker engine. The command displays the immutable proposal and waits for `approve` before restarting anything:
 
 ```bash
