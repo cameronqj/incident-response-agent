@@ -237,19 +237,25 @@ def investigate_site(agent, alert: SiteHealthAlert, trace: InvestigationTrace, o
             },
             config={"configurable": {"thread_id": alert.idempotency_key}, "recursion_limit": 16},
         )
-        result = InvestigationResult.model_validate(output["structured_response"])
-        observations = trace.observations_for(alert.idempotency_key)
+        result = validate_investigation_result(output["structured_response"], alert.idempotency_key, trace)
         tool_calls = trace.tool_calls_for(alert.idempotency_key)
-        missing = sorted(set(result.evidence_refs) - set(observations))
-        if missing:
-            raise ValueError("diagnosis cited evidence that was not observed")
-        if result.proposed_action_id not in allowed_actions(result.diagnosed_scenario, ScenarioKind.SYNTHETIC_MARKER):
-            raise ValueError("diagnosis proposed an action outside deterministic policy")
         span.set_attribute("incident.diagnostic_tool_count", len(tool_calls))
         duration_ms = int((time.monotonic() - started) * 1000)
         span.set_attribute("incident.investigation_duration_ms", duration_ms)
         observability.record_investigation(duration_ms, len(tool_calls), "diagnosed")
         return result
+
+
+def validate_investigation_result(response: object, thread_id: str, trace: InvestigationTrace) -> InvestigationResult:
+    """Validate a model result against evidence observed in one graph thread."""
+    result = InvestigationResult.model_validate(response)
+    observations = trace.observations_for(thread_id)
+    missing = sorted(set(result.evidence_refs) - set(observations))
+    if missing:
+        raise ValueError("diagnosis cited evidence that was not observed")
+    if result.proposed_action_id not in allowed_actions(result.diagnosed_scenario, ScenarioKind.SYNTHETIC_MARKER):
+        raise ValueError("diagnosis proposed an action outside deterministic policy")
+    return result
 
 
 class InvestigationAnalyzer:

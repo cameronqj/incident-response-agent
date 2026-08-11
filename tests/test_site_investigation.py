@@ -7,6 +7,8 @@ import subprocess
 from typing import Any, Sequence
 
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
@@ -14,6 +16,7 @@ from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from incident_response_agent.executor import ContainerRemediationExecutor, DisposableFilesystemExecutor
+from incident_response_agent.causal_workflow import CausalRuntimeRegistry, ThreadScopedCausalTarget, create_causal_recovery_graph
 from incident_response_agent.observability import build_test_observability
 from incident_response_agent.sandbox import DisposableSandbox
 from incident_response_agent.schemas import Decision, DecisionRequest, EventRequest
@@ -229,6 +232,62 @@ def test_causal_experiment_reuses_approval_gate_and_verifies_recovery(tmp_path):
         if service:
             service.close()
         sandbox.close()
+
+
+def test_causal_studio_workflow_interrupts_for_exact_approval_then_recovers():
+    from incident_response_agent.config import Settings
+
+    registry = CausalRuntimeRegistry()
+    try:
+        trace = InvestigationTrace()
+        investigator = create_incident_deep_agent(ScriptedCausalInvestigationModel(), ThreadScopedCausalTarget(registry), trace, platform_managed_checkpointing=True)
+        graph = create_causal_recovery_graph(investigator, registry, trace, Settings(), checkpointer=InMemorySaver())
+        config = {"configurable": {"thread_id": "studio-causal-approve"}}
+        paused = graph.invoke({"messages": [{"role": "user", "content": "The disposable site is unhealthy. Investigate and propose one bounded remediation."}]}, config=config)
+        approval = paused["__interrupt__"][0].value
+        runtime = registry.for_thread("studio-causal-approve")
+
+        assert approval["type"] == "approval_required"
+        assert runtime.lab.check_health().measurements["status_code"] == 503
+        assert paused["proposal"]["action_hash"] == approval["action_hash"]
+
+        completed = graph.invoke(Command(resume={
+            "decision": "approve",
+            "proposal_id": approval["proposal_id"],
+            "revision": approval["revision"],
+            "action_hash": approval["action_hash"],
+        }), config=config)
+
+        assert completed["decision"] == "approve"
+        assert completed["execution_state"] == "succeeded"
+        assert completed["verification"]["measurements"]["status_code"] == 200
+    finally:
+        registry.close()
+
+
+def test_causal_studio_workflow_rejects_tampered_approval_without_execution():
+    from incident_response_agent.config import Settings
+
+    registry = CausalRuntimeRegistry()
+    try:
+        trace = InvestigationTrace()
+        investigator = create_incident_deep_agent(ScriptedCausalInvestigationModel(), ThreadScopedCausalTarget(registry), trace, platform_managed_checkpointing=True)
+        graph = create_causal_recovery_graph(investigator, registry, trace, Settings(), checkpointer=InMemorySaver())
+        config = {"configurable": {"thread_id": "studio-causal-tamper"}}
+        paused = graph.invoke({"messages": [{"role": "user", "content": "Investigate the unhealthy site."}]}, config=config)
+        approval = paused["__interrupt__"][0].value
+
+        with pytest.raises(ValueError, match="immutable proposal"):
+            graph.invoke(Command(resume={
+                "decision": "approve",
+                "proposal_id": approval["proposal_id"],
+                "revision": approval["revision"],
+                "action_hash": "0" * 64,
+            }), config=config)
+
+        assert registry.for_thread("studio-causal-tamper").lab.check_health().measurements["status_code"] == 503
+    finally:
+        registry.close()
 
 
 def test_diagnosis_cannot_cite_unobserved_evidence(tmp_path):

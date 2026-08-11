@@ -88,8 +88,9 @@ class DisposableServiceRestartExecutor:
 class DisposableFilesystemExecutor:
     """Resolves targets in code; it accepts no model-provided path or command."""
 
-    def __init__(self, sandbox: DisposableSandbox):
+    def __init__(self, sandbox: DisposableSandbox, *, owns_sandbox: bool = True):
         self.sandbox = sandbox
+        self.owns_sandbox = owns_sandbox
 
     def execute(self, option: RemediationOption) -> ExecutionResult:
         if option.action_id not in {
@@ -147,7 +148,8 @@ class DisposableFilesystemExecutor:
             return ExecutionResult(False, "cleanup failed", failure_reason_code="filesystem_error")
 
     def close(self) -> None:
-        self.sandbox.close()
+        if self.owns_sandbox:
+            self.sandbox.close()
 
 
 CONTAINER_ACTION_SCRIPTS = {
