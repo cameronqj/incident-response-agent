@@ -141,6 +141,14 @@ The separate runbook-learning POC investigates an unfamiliar disposable worker-m
 
 The original model proposal remains immutable. The simulated reviewer creates a linked revision that removes generic symptoms from the reusable match contract, approves evaluation, and promotes the revision only if it passes all hidden positive and distractor cases. The command then simulates a later incident retrieving the promoted version. Use `--simulate-review approve` to demonstrate that human approval alone cannot bypass a failing gate, or `reject` to demonstrate terminal rejection. See [`docs/full-sre-agent.md`](docs/full-sre-agent.md) for the high-level path from governed runbook learning to separately reviewed executable capability promotion.
 
+To compare a fresh Deep Agent investigation before and after that governed promotion, run:
+
+```bash
+.venv/bin/python -m incident_response_agent.cli runbook-application-eval
+```
+
+The command creates two LangSmith experiments over the same unfamiliar incident. The baseline has an empty approved registry; the second run gets a fresh agent and exposes only two additional read-only tools: `search_approved_runbooks` and `open_approved_runbook`. Between runs, a simulated application reviewer revises and promotes the candidate through the hidden five-case gate. The learned run must open the returned immutable version and cite its exact content digest. Pending, rejected, superseded, evaluation-failed, and digest-tampered records are not visible through the tools. Add `--no-upload` for a local deterministic harness without retained LangSmith experiments.
+
 For a real disposable-service recovery cycle, use a bearer token and a working Podman/Docker engine. The command displays the immutable proposal and waits for `approve` before restarting anything:
 
 ```bash

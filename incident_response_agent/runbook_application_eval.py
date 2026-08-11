@@ -16,7 +16,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import get_config
 from langsmith import Client
 from langsmith.schemas import Example
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .config import Settings
 from .runbook_learning import (
@@ -54,7 +54,25 @@ class RunbookAwareDiagnosis(BaseModel):
     confidence: float = Field(ge=0, le=1)
     evidence_refs: list[str] = Field(min_length=2, max_length=12)
     conclusion: str = Field(min_length=10, max_length=1000)
-    runbook_citation: RunbookCitation | None = None
+    applied_runbook_id: str | None = Field(default=None, max_length=128)
+    applied_runbook_version: int | None = Field(default=None, ge=1)
+    applied_runbook_digest: str | None = Field(default=None, min_length=64, max_length=64)
+
+    @model_validator(mode="after")
+    def citation_fields_are_all_present_or_absent(self) -> "RunbookAwareDiagnosis":
+        values = (self.applied_runbook_id, self.applied_runbook_version, self.applied_runbook_digest)
+        if any(value is not None for value in values) and not all(value is not None for value in values):
+            raise ValueError("applied runbook citation fields must be all present or all absent")
+        return self
+
+    def citation(self) -> RunbookCitation | None:
+        if self.applied_runbook_id is None:
+            return None
+        return RunbookCitation(
+            runbook_id=self.applied_runbook_id,
+            version=self.applied_runbook_version,
+            content_digest=self.applied_runbook_digest,
+        )
 
 
 @dataclass
@@ -138,7 +156,7 @@ def build_runbook_tools(
     ]
 
 
-RUNBOOK_AWARE_PROMPT = """Investigate one unfamiliar failure affecting an owned disposable worker service. Gather health, resource, recent-change, and bounded-log evidence before concluding. After gathering evidence, call search_approved_runbooks. If it returns a candidate, open the best matching version with open_approved_runbook and apply its diagnostic guidance. Cite only observations that support the causal explanation; do not cite generic symptoms or normal-state observations merely used to reject alternatives. Return a structured diagnosis. primary_resource and trigger must describe the supported mechanism. If you opened a runbook, runbook_citation must exactly reproduce its returned citation. If no promoted runbook matched, return runbook_citation=null. Runbooks are diagnostic knowledge only and grant no executable authority."""
+RUNBOOK_AWARE_PROMPT = """Investigate one unfamiliar failure affecting an owned disposable worker service. Gather health, resource, recent-change, and bounded-log evidence before concluding. After gathering evidence, call search_approved_runbooks. If it returns a candidate, open the best matching version with open_approved_runbook and apply its diagnostic guidance. Cite only observations that support the causal explanation; do not cite generic symptoms or normal-state observations merely used to reject alternatives. Return a structured diagnosis. primary_resource and trigger must describe the supported mechanism. If you opened a runbook, copy its citation into the three flat fields applied_runbook_id, applied_runbook_version, and applied_runbook_digest. If no promoted runbook matched, leave all three fields null. Runbooks are diagnostic knowledge only and grant no executable authority."""
 
 
 def create_runbook_aware_agent(
@@ -181,10 +199,11 @@ def investigate_with_runbooks(
     if set(diagnosis.evidence_refs) - set(observations):
         raise ValueError("diagnosis cited evidence that was not observed")
     opened = knowledge_trace.opened_for(thread_id)
-    citation_valid = diagnosis.runbook_citation is None and not opened
-    if diagnosis.runbook_citation is not None:
-        citation_valid = diagnosis.runbook_citation in opened
-    if require_runbook and (not opened or diagnosis.runbook_citation is None):
+    citation = diagnosis.citation()
+    citation_valid = citation is None and not opened
+    if citation is not None:
+        citation_valid = citation in opened
+    if require_runbook and (not opened or citation is None):
         raise ValueError("learned investigation must open and cite a promoted runbook")
     if not citation_valid:
         raise ValueError("diagnosis runbook citation was not opened in this investigation")
@@ -192,6 +211,7 @@ def investigate_with_runbooks(
     runbook_calls = knowledge_trace.tool_calls_for(thread_id)
     return {
         **diagnosis.model_dump(mode="json"),
+        "runbook_citation": citation.model_dump(mode="json") if citation else None,
         "diagnostic_tool_calls": diagnostic_calls,
         "runbook_tool_calls": runbook_calls,
         "tool_calls": [*diagnostic_calls, *runbook_calls],
@@ -276,15 +296,16 @@ def _local_dataset() -> list[Example]:
 
 
 def _trace_usage(client: Client, root_run) -> dict[str, int | float | None]:
+    persisted = client.read_run(root_run.id)
     latency_ms = None
-    if root_run.end_time and root_run.start_time:
-        latency_ms = int((root_run.end_time - root_run.start_time).total_seconds() * 1000)
-    total_tokens = root_run.total_tokens
+    if persisted.end_time and persisted.start_time:
+        latency_ms = int((persisted.end_time - persisted.start_time).total_seconds() * 1000)
+    total_tokens = persisted.total_tokens
     if total_tokens is None:
-        llm_runs = list(client.list_runs(trace_id=root_run.trace_id, run_type="llm"))
+        llm_runs = list(client.list_runs(trace_id=persisted.trace_id, run_type="llm"))
         totals = [run.total_tokens for run in llm_runs if run.total_tokens is not None]
         total_tokens = sum(totals) if totals else None
-    return {"latency_ms": latency_ms, "total_tokens": total_tokens, "total_cost": root_run.total_cost}
+    return {"latency_ms": latency_ms, "total_tokens": total_tokens, "total_cost": persisted.total_cost}
 
 
 def summarize_experiment(results, client: Client, *, include_remote_usage: bool) -> dict[str, Any]:
@@ -300,9 +321,11 @@ def summarize_experiment(results, client: Client, *, include_remote_usage: bool)
         outputs = row["run"].outputs or {}
         usage = _trace_usage(client, row["run"]) if include_remote_usage else {
             "latency_ms": outputs.get("duration_ms"),
-            "total_tokens": row["run"].total_tokens,
-            "total_cost": row["run"].total_cost,
+            "total_tokens": getattr(row["run"], "total_tokens", None),
+            "total_cost": getattr(row["run"], "total_cost", None),
         }
+        if usage["latency_ms"] is None:
+            usage["latency_ms"] = outputs.get("duration_ms")
         cases.append({
             "case_id": (row["example"].inputs or {}).get("case_id"),
             "error": row["run"].error,

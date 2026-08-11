@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import inspect
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Sequence
 
 import pytest
@@ -13,6 +15,7 @@ from incident_response_agent.runbook_application_eval import (
     RunbookAwareDiagnosis,
     RunbookCitation,
     RunbookKnowledgeTrace,
+    _trace_usage,
     create_runbook_aware_agent,
     diagnosis_correct,
     distractor_avoidance,
@@ -97,7 +100,9 @@ def _diagnosis_message(citation: RunbookCitation | None) -> AIMessage:
         confidence=0.95,
         evidence_refs=["resources-1", "changes-1", "logs-1"],
         conclusion="The causal chain is increased worker concurrency, memory pressure, and correlated OOM termination.",
-        runbook_citation=citation,
+        applied_runbook_id=citation.runbook_id if citation else None,
+        applied_runbook_version=citation.version if citation else None,
+        applied_runbook_digest=citation.content_digest if citation else None,
     )
     return AIMessage(content="", tool_calls=[{
         "name": "RunbookAwareDiagnosis",
@@ -240,3 +245,25 @@ def test_before_after_evaluators_measure_diagnosis_evidence_tools_and_citation()
 def test_evaluator_signatures_match_langsmith_parameter_contract():
     for evaluator in EVALUATORS:
         assert list(inspect.signature(evaluator).parameters) == ["inputs", "outputs", "reference_outputs"]
+
+
+def test_trace_usage_resolves_persisted_run_from_evaluation_runtree():
+    started = datetime.now(timezone.utc)
+
+    class FakeClient:
+        def read_run(self, run_id):
+            assert run_id == "root-id"
+            return SimpleNamespace(
+                start_time=started,
+                end_time=started + timedelta(milliseconds=125),
+                total_tokens=None,
+                total_cost=0.01,
+                trace_id="trace-id",
+            )
+
+        def list_runs(self, **kwargs):
+            assert kwargs == {"trace_id": "trace-id", "run_type": "llm"}
+            return iter([SimpleNamespace(total_tokens=100), SimpleNamespace(total_tokens=50)])
+
+    usage = _trace_usage(FakeClient(), SimpleNamespace(id="root-id"))
+    assert usage == {"latency_ms": 125, "total_tokens": 150, "total_cost": 0.01}
