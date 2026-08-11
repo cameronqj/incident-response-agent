@@ -10,6 +10,7 @@ from deepagents.backends import StateBackend
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
+from langchain.agents.middleware import ModelRequest, ModelResponse, wrap_model_call
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -145,7 +146,23 @@ def build_diagnostic_tools(target: SiteDiagnosticTarget, trace: InvestigationTra
     return tools
 
 
-SYSTEM_PROMPT = """You investigate one owned disposable site. Start by writing a concise todo plan. Use read-only diagnostics to determine why a generic health check failed. Do not assume an incident category. Delegate focused evidence review when useful. Never invent evidence, commands, paths, targets, or parameters. Return a structured diagnosis citing only evidence_id values actually returned by tools. You may propose only a named bounded action; deterministic policy and a human remain authoritative."""
+SYSTEM_PROMPT = """You investigate one owned disposable site. Plan a concise investigation and use only the supplied read-only diagnostic tools to determine why a generic health check failed. Do not assume an incident category. After diagnostics, immediately return a structured diagnosis. Never invent evidence, commands, paths, targets, or parameters. Cite only evidence_id values actually returned by tools. proposed_action_id must be exactly one of: cleanup_rotated_logs, stop_runaway_process, restart_disposable_service, stop_memory_hog, cleanup_log_storm_temp_files. Choose the action compatible with your diagnosed scenario. Deterministic policy and a human remain authoritative."""
+
+AGENT_TOOL_ALLOWLIST = {
+    "check_site_health",
+    "inspect_resources",
+    "inspect_services",
+    "inspect_processes",
+    "inspect_recent_logs",
+    "InvestigationResult",
+}
+
+
+@wrap_model_call
+def incident_tool_boundary(request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]) -> ModelResponse:
+    """Hide generic filesystem tools from the incident model and retain the Deep Agent harness state internally."""
+    tools = [tool for tool in request.tools if tool.name in AGENT_TOOL_ALLOWLIST]
+    return handler(request.override(tools=tools))
 
 
 RESOURCE_SUBAGENT = {
@@ -172,11 +189,10 @@ def create_incident_deep_agent(model: BaseChatModel, target: SiteDiagnosticTarge
         tools=tools,
         system_prompt=SYSTEM_PROMPT,
         subagents=subagents,
+        middleware=[incident_tool_boundary],
         response_format=InvestigationResult,
         backend=StateBackend(),
         permissions=[
-            FilesystemPermission(operations=["read"], paths=["/workspace/**"], mode="allow"),
-            FilesystemPermission(operations=["write"], paths=["/workspace/**"], mode="allow"),
             FilesystemPermission(operations=["read", "write"], paths=["/**"], mode="deny"),
         ],
         checkpointer=InMemorySaver(),
@@ -196,6 +212,7 @@ def create_live_investigation_model(settings: Settings) -> ChatOpenAI:
         timeout=settings.model_timeout_seconds,
         max_retries=settings.model_max_retries,
         temperature=0,
+        extra_body={"thinking": {"type": "disabled"}},
     )
 
 
@@ -204,8 +221,10 @@ def investigate_site(agent, alert: SiteHealthAlert, trace: InvestigationTrace, o
     started = time.monotonic()
     with observability.span("incident.site_investigation", {"incident.alert_kind": alert.symptom}) as span:
         output = agent.invoke(
-            {"messages": [{"role": "user", "content": "The owned disposable site has failed its health check. Investigate the cause and propose one bounded remediation."}]},
-            config={"configurable": {"thread_id": alert.idempotency_key}},
+            {
+                "messages": [{"role": "user", "content": "The owned disposable site has failed its health check. Investigate the cause and propose one bounded remediation."}],
+            },
+            config={"configurable": {"thread_id": alert.idempotency_key}, "recursion_limit": 16},
         )
         result = InvestigationResult.model_validate(output["structured_response"])
         missing = sorted(set(result.evidence_refs) - set(trace.observations))
@@ -250,7 +269,3 @@ class FixedInvestigationTelemetry:
 
     def collect(self, _event) -> TelemetryEvidence:
         return self.evidence
-
-
-def safe_investigation_audit(trace: InvestigationTrace) -> list[dict[str, object]]:
-    return [{"tool": name, "result": "completed"} for name in trace.tool_calls]

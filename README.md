@@ -14,6 +14,7 @@ The goal is to demonstrate observable application behavior across a realistic mu
 - OTLP/HTTP export to a real disposable OpenTelemetry Collector, with strict attribute allowlists and secret-leakage regression tests.
 - Deterministic offline instrumentation tests plus separately labeled container and live-inference evidence.
 - A realistic workflow workload: synthetic disk, CPU, memory, restart-loop, and log-storm scenarios; bounded ENOSPC/OOM checks; and one real unhealthy disposable-service recovery cycle.
+- An opt-in Deep Agents path that starts from a generic site-health failure, gathers bounded evidence without receiving the injected scenario, and hands a validated diagnosis to the existing approval control plane.
 
 ## Signal coverage
 
@@ -38,6 +39,8 @@ flowchart LR
     Workflow --> OTel
     OTel --> Collector[OTLP Collector]
 ```
+
+The scenario-specific API and CLI paths are pre-triaged workflows. The separate Deep Agents path starts with only `site unhealthy`, uses read-only diagnostic tools, validates cited evidence and the proposed action deterministically, and then reuses the immutable proposal and execution machinery. Delegation profiles exist for follow-on experiments, but delegation is hidden in the first provider-compatible live slice to keep termination bounded.
 
 The incident workflow provides enough branching, latency, failure, approval, and side-effect behavior to make telemetry meaningful. SQLite records the sanitized durable history; OpenTelemetry supplies operational traces and metrics. Both are correlated without exporting event bodies, prompts, evidence text, credentials, paths, or arbitrary model output.
 
@@ -83,6 +86,14 @@ The bootstrap script creates `.venv`, installs only into that environment, creat
 
 The CLI demo uses a process-owned temporary sandbox and deterministic fake model. It does not require a bearer token, container engine, network, or API key.
 
+To exercise Deep Agents against an ambiguous synthetic site failure, use the locally configured inference key:
+
+```bash
+.venv/bin/python -m incident_response_agent.cli site-unhealthy-demo
+```
+
+The command privately injects failed log rotation and disk pressure, but the agent receives only a generic health-check failure. It may inspect bounded health, resources, services, processes, and sanitized log signals. Generic filesystem and shell tools are removed at the model boundary, so the agent has no host filesystem, arbitrary path, target-selection, or remediation capability. After investigation, the command displays the immutable proposal and waits for `approve`. `OPENCODE_KEY` is loaded from the gitignored local `.env` when present; its value is never printed or persisted.
+
 For a real disposable-service recovery cycle, use a bearer token and a working Podman/Docker engine. The command displays the immutable proposal and waits for `approve` before restarting anything:
 
 ```bash
@@ -97,6 +108,12 @@ Run the offline suite:
 
 ```bash
 .venv/bin/python -m pytest -m 'not integration and not live'
+```
+
+The offline suite scripts exact Deep Agent tool calls and structured output without network access. The opt-in live check verifies that the configured model supports the tool-calling contract:
+
+```bash
+RUN_LIVE_TESTS=1 .venv/bin/python -m pytest tests/test_site_investigation.py -m live
 ```
 
 ## Local API access
@@ -160,6 +177,8 @@ RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live
 ```
 
 Defaults are base URL `https://opencode.ai/zen/go/v1`, model `deepseek-v4-flash`, and API-key environment variable `OPENCODE_KEY`. They remain configurable through `MODEL_BASE_URL`, `MODEL_NAME`, and `MODEL_API_KEY_ENV`. Live mode fails clearly when its key is absent and never falls back to fake inference.
+
+The Deep Agents path uses the same configurable endpoint and key through `langchain-openai`. Unlike the legacy single-call adapter, it requires model tool-calling support. Passing the legacy chat-completions test therefore does not by itself establish Deep Agents compatibility.
 
 Live provider responses are read through a 65,536-byte hard limit before parsing. Structured assessment summaries are limited to 2,000 characters, `evidence_refs` to 20 items of at most 500 characters each, and unknown fields are rejected.
 

@@ -26,7 +26,6 @@ from .site_investigation import (
     create_incident_deep_agent,
     create_live_investigation_model,
     investigate_site,
-    safe_investigation_audit,
 )
 
 
@@ -147,8 +146,7 @@ def site_unhealthy_demo() -> None:
             ),
             actor="deep-agent-investigator",
         )
-        for audit in safe_investigation_audit(trace):
-            service._audit(run.run_id, run.trace_id, "diagnostic_tool_called", audit, "deep-agent-investigator")
+        service.record_diagnostic_tools(run.run_id, trace.tool_calls, "deep-agent-investigator")
         assert run.proposal is not None
         proposal = run.proposal
         print(json.dumps({"phase": "investigated", "diagnosis": result.model_dump(mode="json"), "tool_calls": trace.tool_calls, "proposal": proposal.model_dump(mode="json")}, indent=2))
@@ -160,7 +158,7 @@ def site_unhealthy_demo() -> None:
             return
         completed = service.execute(proposal.proposal_id, actor="site-unhealthy-demo")
         verification = lab.check_health()
-        service._audit(completed.run_id, completed.trace_id, "recovery_verified", {"result": "healthy" if verification.measurements["status_code"] == 200 else "unhealthy"}, "site-unhealthy-demo", proposal.proposal_id)
+        service.record_recovery_verification(completed.run_id, proposal.proposal_id, verification.measurements["status_code"] == 200, "site-unhealthy-demo")
         print(json.dumps({"phase": "executed", "state": completed.state.value, "verification": verification.model_dump(mode="json")}, indent=2))
     finally:
         if service is not None:

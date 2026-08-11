@@ -76,6 +76,22 @@ class IncidentService:
         details["actor"] = actor
         self.store.create_audit({"run_id": run_id, "trace_id": trace_id, "proposal_id": proposal_id, "event_type": event_type, "metadata": safe_metadata(details), "occurred_at": self.clock.now().isoformat()})
 
+    def record_diagnostic_tools(self, run_id: str, tool_names: list[str], actor: str) -> None:
+        run = self.store.get_run(run_id)
+        if not run:
+            raise NotFoundError("run not found")
+        allowed = {"check_site_health", "inspect_resources", "inspect_services", "inspect_processes", "inspect_recent_logs"}
+        for tool_name in tool_names:
+            if tool_name not in allowed:
+                raise ValueError("unknown diagnostic tool")
+            self._audit(run_id, run["trace_id"], "diagnostic_tool_called", {"tool": tool_name, "result": "completed"}, actor)
+
+    def record_recovery_verification(self, run_id: str, proposal_id: str, healthy: bool, actor: str) -> None:
+        run = self.store.get_run(run_id)
+        if not run:
+            raise NotFoundError("run not found")
+        self._audit(run_id, run["trace_id"], "recovery_verified", {"result": "healthy" if healthy else "unhealthy"}, actor, proposal_id)
+
     @staticmethod
     def _map_store_error(exc: Exception) -> ServiceError:
         if isinstance(exc, StoreNotFound):
