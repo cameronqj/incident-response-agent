@@ -50,13 +50,17 @@ Reviewed incidents can later be added to LangSmith datasets and annotation queue
 
 ### 4. Capability proposal lifecycle
 
-A later phase may allow the agent to propose a typed executable capability. A capability candidate must define parameters, allowed targets, prerequisites, required evidence, maximum blast radius, approval policy, idempotency, timeout, verification, and rollback. Human-written or independently reviewed executor code binds the definition to an implementation.
+The agent may propose a typed executable capability. A capability candidate must define parameters, allowed targets, prerequisites, required evidence, maximum blast radius, approval policy, idempotency, timeout, verification, and rollback. Human-written or independently reviewed executor code binds the definition to an implementation.
 
 The knowledge registry and executable capability registry remain separate. Promoting a runbook never grants a new action.
+
+The `reduce_worker_concurrency` capability POC demonstrates this lifecycle: a Deep Agent researches one owned disposable worker incident and proposes the typed contract, an application-owned reviewer and deterministic hidden-case gate promote it, and trusted application code implements the executor. Promotion grants registry presence only; activation still requires the existing immutable proposal, hash-bound human approval, and one-target execution with verification and rollback. See ADR 009.
 
 ### 5. Controlled activation and feedback
 
 Approved capabilities are activated only in a disposable or explicitly allowed environment. The first execution is constrained to one target, followed by deterministic health verification. Failure triggers bounded rollback or escalation. Outcomes become reviewed evidence for regression cases and future runbook revisions.
+
+The capability POC demonstrates one-target activation and deterministic verification on the owned disposable worker; `--fail-verification` exercises bounded rollback with an auditable `rollback_applied` outcome. Outcomes are recorded as activation records but are not yet automatically converted into regression cases — that remains a reviewed feedback step, never silent learning from an unreviewed incident.
 
 ## Target architecture
 
@@ -113,4 +117,4 @@ This slice now includes a retained LangSmith before/after experiment. The first 
 
 ## Follow-on capability POC
 
-After the runbook loop is demonstrated, add one disposable-lab capability such as `reduce_worker_concurrency`. The agent may propose its schema and safety contract, but trusted code supplies the implementation. Promotion requires human approval, policy checks, hidden evaluation cases, one-target activation, health verification, and rollback. The existing immutable remediation proposal remains the final execution boundary.
+The `reduce_worker_concurrency` slice demonstrates the governed capability loop: the agent proposes a typed schema and safety contract, trusted code supplies the executor, promotion requires review, policy checks, and hidden evaluation cases, and activation is one-target with health verification and rollback. The existing immutable remediation proposal remains the final execution boundary. A containerized worker variant, additional capabilities, and SREGym-style external cluster evaluation remain future work; each would require its own scenario/evidence-kind binding.

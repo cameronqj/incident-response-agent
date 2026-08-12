@@ -140,6 +140,7 @@ def test_before_learning_investigation_searches_empty_registry_without_citation(
     model = ScriptedApplicationModel(responses=[*_diagnostic_responses(), _tool("search_approved_runbooks"), _diagnosis_message(None)])
     output = investigate_with_runbooks(
         create_runbook_aware_agent(model, WorkerMemoryPressureLab(), registry, investigation_trace, knowledge_trace),
+        registry,
         investigation_trace,
         knowledge_trace,
         "before-learning",
@@ -164,6 +165,7 @@ def test_after_learning_investigation_searches_opens_applies_and_cites_promoted_
     ])
     output = investigate_with_runbooks(
         create_runbook_aware_agent(model, WorkerMemoryPressureLab(), registry, investigation_trace, knowledge_trace),
+        registry,
         investigation_trace,
         knowledge_trace,
         "after-learning",
@@ -184,11 +186,47 @@ def test_unopened_or_forged_runbook_citation_is_rejected():
     with pytest.raises(ValueError, match="must open and cite"):
         investigate_with_runbooks(
             create_runbook_aware_agent(model, WorkerMemoryPressureLab(), registry, investigation_trace, knowledge_trace),
+            registry,
             investigation_trace,
             knowledge_trace,
             "forged-citation",
             require_runbook=True,
         )
+
+
+def test_opened_runbook_carries_evidence_scope_directive():
+    import json
+
+    from incident_response_agent.runbook_application_eval import build_runbook_tools
+    from incident_response_agent.runbook_learning import WorkerMemoryPressureLab
+
+    registry = RunbookRegistry(":memory:")
+    try:
+        promoted = _promote(registry)
+        investigation_trace = InvestigationTrace()
+        knowledge_trace = RunbookKnowledgeTrace()
+        search_tool, open_tool = build_runbook_tools(registry, investigation_trace, knowledge_trace)
+        target = WorkerMemoryPressureLab()
+        for name, op in (
+            ("check_site_health", target.check_health),
+            ("inspect_resources", target.inspect_resources),
+            ("inspect_recent_changes", target.inspect_recent_changes),
+            ("inspect_recent_logs", target.inspect_recent_logs),
+        ):
+            investigation_trace.record("scope-test", name, op())
+        search_result = search_tool.invoke({}, config={"configurable": {"thread_id": "scope-test"}})
+        assert promoted.runbook_id in search_result
+        opened = open_tool.invoke(
+            {"runbook_id": promoted.runbook_id, "version": promoted.version},
+            config={"configurable": {"thread_id": "scope-test"}},
+        )
+        payload = json.loads(opened)
+        assert set(payload["required_evidence_categories"]) == {"resources", "changes", "logs"}
+        assert "evidence_scope" in payload
+        assert "required_evidence_categories" in payload["evidence_scope"]
+        assert "must not be cited" in payload["evidence_scope"]
+    finally:
+        registry.close()
 
 
 def test_only_promoted_untampered_versions_are_visible():

@@ -127,6 +127,26 @@ class SyntheticLogStormTelemetry:
         )
 
 
+class SyntheticWorkerConcurrencyTelemetry:
+    """Synthetic worker-concurrency evidence; it never inspects the host."""
+
+    def collect(self, event: EventRequest) -> TelemetryEvidence:
+        return TelemetryEvidence(
+            scenario=Scenario.WORKER_CONCURRENCY,
+            scenario_kind=ScenarioKind.SYNTHETIC_MARKER,
+            rotation_failed=False,
+            free_bytes=1_048_576,
+            log_growth_bytes_per_minute=0,
+            affected_file_count=0,
+            memory_percent=96.0,
+            oom_kill_detected=True,
+            worker_concurrency=12,
+            safe_worker_concurrency=4,
+            signals=["memory_pressure", "worker_concurrency_increased", "concurrency_correlated_oom", "oom_kill"],
+            fault_injection="WORKER_CONCURRENCY_PRESSURE",
+        )
+
+
 class ScenarioTelemetryCollector:
     """Route synthetic events to explicit, bounded scenario adapters."""
 
@@ -137,6 +157,7 @@ class ScenarioTelemetryCollector:
             Scenario.RESTARTING_SERVICE: SyntheticRestartingServiceTelemetry(),
             Scenario.MEMORY_OOM: SyntheticMemoryOOMTelemetry(),
             Scenario.LOG_STORM: SyntheticLogStormTelemetry(),
+            Scenario.WORKER_CONCURRENCY: SyntheticWorkerConcurrencyTelemetry(),
         }
 
     def collect(self, event: EventRequest) -> TelemetryEvidence:

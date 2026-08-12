@@ -12,7 +12,7 @@ from .executor import DisposableFilesystemExecutor
 from .factory import build_service
 from .model import FakeAnalyzer
 from .sandbox import DisposableSandbox
-from .schemas import Decision, DecisionRequest, EventRequest
+from .schemas import Decision, DecisionRequest, EventRequest, Scenario
 from .service import IncidentService
 from .storage import SQLiteStore
 from .telemetry import DeterministicENOSPCTelemetry
@@ -21,12 +21,15 @@ from .site_investigation import (
     DisposableSiteLab,
     FixedInvestigationTelemetry,
     InvestigationAnalyzer,
+    InvestigationResult,
     InvestigationTrace,
     SiteHealthAlert,
     create_incident_deep_agent,
     create_live_investigation_model,
     investigate_site,
 )
+from .runbook_application_eval import RunbookKnowledgeTrace
+from .capability_learning import CapabilityActivationRecord, CapabilityResearchProposal
 
 
 def initialize_database(database_path: str) -> dict[str, str | int]:
@@ -232,6 +235,168 @@ def runbook_learning_demo(database_path: str, decision: str) -> None:
         registry.close()
 
 
+def capability_learning_demo(database_path: str, decision: str, fail_verification: bool) -> None:
+    from .capability_learning import (
+        CapabilityRegistry,
+        CapabilityReviewDecision,
+        ConcurrencyWorkerLab,
+        DeterministicCapabilityEvaluator,
+        PromotedCapability,
+        create_capability_research_agent,
+        research_capability_with_recovery,
+        simulated_reviewer_revision,
+    )
+    from .executor import ConcurrencyReductionExecutor
+    from .policy import OptionBinding
+    from .runbook_learning import RunbookRegistry
+    from .schemas import CapabilityBinding
+
+    settings = Settings.from_env()
+    trace = InvestigationTrace()
+    thread_id = f"capability-learning-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}"
+    lab = ConcurrencyWorkerLab(fail_verification=fail_verification)
+    runbook_registry = None
+    knowledge_trace = None
+    proposal = None
+    recovered = False
+    try:
+        runbook_registry = RunbookRegistry(database_path)
+        knowledge_trace = RunbookKnowledgeTrace()
+        model = create_live_investigation_model(settings)
+        agent = create_capability_research_agent(model, lab, trace, runbook_registry, knowledge_trace)
+        proposal, recovered = research_capability_with_recovery(agent, trace, thread_id)
+    finally:
+        if runbook_registry is not None:
+            runbook_registry.close()
+    if recovered:
+        print(json.dumps({"phase": "research_contract_violation", "detail": "the model proposal violated the observed-evidence contract; the application stripped the unobserved signals from the model proposal before review" if proposal is not None else "the model proposal was invalid; the application substituted the reference contract before review"}, indent=2))
+
+    registry = CapabilityRegistry(database_path)
+    try:
+        candidate = registry.submit(proposal)
+        print(json.dumps({"phase": "candidate", "reviewer_kind": "simulated_human", "candidate": candidate.model_dump(mode="json")}, indent=2))
+        if decision == "revise-approve":
+            candidate = registry.revise(
+                candidate.candidate_id,
+                simulated_reviewer_revision(candidate.proposal),
+                actor="simulated-sre-reviewer",
+                note="Removed generic health and normal-state observations from the reusable capability prerequisites.",
+            )
+            print(json.dumps({"phase": "revised_candidate", "reviewer_kind": "simulated_human", "candidate": candidate.model_dump(mode="json")}, indent=2))
+            decision = "approve"
+        reviewed = registry.review(
+            candidate.candidate_id,
+            CapabilityReviewDecision(decision),
+            actor="simulated-sre-reviewer",
+            evaluator=DeterministicCapabilityEvaluator(),
+            note="POC decision supplied by --simulate-review; no Studio approval used.",
+        )
+        output: dict[str, object] = {"phase": reviewed.state.value if hasattr(reviewed, "state") else "promoted", "review": reviewed.model_dump(mode="json")}
+        if not isinstance(reviewed, PromotedCapability):
+            print(json.dumps(output, indent=2))
+            return
+        observations = trace.observations_for(thread_id).values()
+        signals = {signal for observation in observations for signal in observation.signals}
+        categories = {observation.category for observation in trace.observations_for(thread_id).values()}
+        output["later_incident_retrieval"] = [
+            {"capability_id": match.capability_id, "version": match.version, "title": match.proposal.title}
+            for match in registry.find_approved(signals, categories)
+        ]
+        print(json.dumps(output, indent=2))
+
+        actor = "capability-learning-demo"
+        observed_at = datetime.now(timezone.utc)
+        alert = SiteHealthAlert(
+            idempotency_key=f"capability-worker-{observed_at.strftime('%Y%m%d%H%M%S%f')}",
+            observed_at=observed_at,
+        )
+        result = InvestigationResult(
+            diagnosed_scenario=Scenario.WORKER_CONCURRENCY,
+            severity="high",
+            confidence=0.97,
+            evidence_refs=sorted(trace.observations_for(thread_id)),
+            proposed_action_id="reduce_worker_concurrency",
+            explanation="Worker memory pressure correlated with elevated concurrency; one bounded concurrency reduction is proposed.",
+        )
+        evidence = lab.telemetry_for(result)
+        promoted_binding = CapabilityBinding(
+            capability_id=reviewed.capability_id,
+            version=reviewed.version,
+            content_digest=reviewed.content_digest,
+        )
+        service = IncidentService(
+            SQLiteStore(":memory:"),
+            FixedInvestigationTelemetry(evidence),
+            InvestigationAnalyzer(result),
+            ConcurrencyReductionExecutor(lab, registry),
+            proposal_ttl_seconds=settings.proposal_ttl_seconds,
+            execution_enabled=True,
+            option_binding=lambda _scenario, _kind, _action_id: OptionBinding(
+                parameters={"target_concurrency": lab.safe_concurrency},
+                target_id=lab.lab_id,
+                capability=promoted_binding,
+            ),
+        )
+        try:
+            run = service.start_event(
+                EventRequest.model_validate(
+                    {
+                        "idempotency_key": alert.idempotency_key,
+                        "source": "local_simulation",
+                        "observed_at": observed_at,
+                        "payload": {"scenario": Scenario.WORKER_CONCURRENCY.value, "summary": "worker concurrency investigation completed"},
+                    }
+                ),
+                actor="deep-agent-investigator",
+            )
+            assert run.proposal is not None
+            proposal = run.proposal
+            print(json.dumps({"phase": "activated_proposal", "option": proposal.option.model_dump(mode="json")}, indent=2))
+            response = input("Type approve to activate this exact bounded capability proposal: ").strip().lower()
+            decision = Decision.APPROVE if response == "approve" else Decision.REJECT
+            service.decide(proposal.proposal_id, DecisionRequest(decision=decision, revision=proposal.revision, action_hash=proposal.action_hash), actor=actor)
+            if decision == Decision.REJECT:
+                print(json.dumps({"phase": "rejected"}, indent=2))
+                return
+            completed = service.execute(proposal.proposal_id, actor=actor)
+            verification = lab.check_health()
+            healthy = verification.measurements["status_code"] == 200
+            service.record_recovery_verification(completed.run_id, proposal.proposal_id, healthy, actor)
+            service.record_capability_activation(
+                completed.run_id,
+                proposal.proposal_id,
+                reviewed.capability_id,
+                reviewed.version,
+                "succeeded" if healthy else "rollback_applied",
+                not healthy and lab.current_concurrency == 12,
+                actor,
+            )
+            registry.record_activation(CapabilityActivationRecord(
+                activation_id=f"act-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}",
+                run_id=completed.run_id,
+                proposal_id=proposal.proposal_id,
+                capability_id=reviewed.capability_id,
+                version=reviewed.version,
+                target_id=lab.lab_id,
+                outcome="succeeded" if healthy else "failed",
+                verification=healthy,
+                rollback_applied=not healthy and lab.current_concurrency == 12,
+                occurred_at=datetime.now(timezone.utc),
+                actor=actor,
+            ))
+            print(json.dumps({
+                "phase": "executed",
+                "state": completed.state.value,
+                "verification": verification.model_dump(mode="json"),
+                "final_concurrency": lab.current_concurrency,
+                "rollback_applied": not healthy and lab.current_concurrency == 12,
+            }, indent=2))
+        finally:
+            service.close()
+    finally:
+        registry.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="incident-response")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -246,8 +411,14 @@ def main() -> None:
     runbook_parser = subparsers.add_parser("runbook-learning-demo", help="research and evaluate one runbook with a simulated application reviewer")
     runbook_parser.add_argument("--database-path", default=".data/runbook-learning.sqlite3")
     runbook_parser.add_argument("--simulate-review", choices=["approve", "reject", "revise-approve"], default="revise-approve")
+    capability_parser = subparsers.add_parser("capability-learning-demo", help="research and promote one typed capability with a simulated application reviewer, then activate it")
+    capability_parser.add_argument("--database-path", default=".data/capability-learning.sqlite3")
+    capability_parser.add_argument("--simulate-review", choices=["approve", "reject", "revise-approve"], default="revise-approve")
+    capability_parser.add_argument("--fail-verification", action="store_true", help="force the post-activation health check to fail so rollback is demonstrated")
     runbook_eval_parser = subparsers.add_parser("runbook-application-eval", help="compare a fresh incident before and after governed runbook promotion")
     runbook_eval_parser.add_argument("--no-upload", action="store_true", help="run without retaining LangSmith experiment results")
+    capability_eval_parser = subparsers.add_parser("capability-application-eval", help="compare a fresh incident before and after governed capability promotion")
+    capability_eval_parser.add_argument("--no-upload", action="store_true", help="run without retaining LangSmith experiment results")
     init_parser = subparsers.add_parser("init-db", help="create or migrate the SQLite database")
     init_parser.add_argument("--database-path", default=None)
     serve_parser = subparsers.add_parser("serve", help="run the FastAPI service")
@@ -282,10 +453,19 @@ def main() -> None:
     if args.command == "runbook-learning-demo":
         runbook_learning_demo(args.database_path, args.simulate_review)
         return
+    if args.command == "capability-learning-demo":
+        capability_learning_demo(args.database_path, args.simulate_review, args.fail_verification)
+        return
     if args.command == "runbook-application-eval":
         from .runbook_application_eval import run_runbook_application_evaluation
 
         result = run_runbook_application_evaluation(Settings.from_env(), upload_results=not args.no_upload)
+        print(json.dumps(result, default=str, indent=2))
+        return
+    if args.command == "capability-application-eval":
+        from .capability_application_eval import run_capability_application_evaluation
+
+        result = run_capability_application_evaluation(Settings.from_env(), upload_results=not args.no_upload)
         print(json.dumps(result, default=str, indent=2))
         return
     if args.command == "init-db":

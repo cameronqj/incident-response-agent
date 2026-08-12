@@ -7,6 +7,7 @@ import subprocess
 import uuid
 from typing import Protocol
 
+from .capability_learning import CapabilityRegistry, ConcurrencyWorkerLab
 from .container_lab import ContainerLabError, DisposableContainerService
 from .sandbox import DisposableSandbox, SandboxViolation
 from .schemas import RemediationOption
@@ -150,6 +151,71 @@ class DisposableFilesystemExecutor:
     def close(self) -> None:
         if self.owns_sandbox:
             self.sandbox.close()
+
+
+class ConcurrencyReductionExecutor:
+    """Lower the worker concurrency of exactly one owned disposable lab target.
+
+    Execution is authorized only by a promoted capability record: the approved
+    proposal must name a capability id, version, and content digest, the registry
+    must still hold that exact record, and the executed parameters must conform
+    to the promoted contract's parameter schema and target class. The concrete
+    target id is chosen by application code, bound into the approved proposal,
+    and revalidated against the owned lab here.
+    """
+
+    def __init__(self, target: ConcurrencyWorkerLab, registry: CapabilityRegistry):
+        self.target = target
+        self.registry = registry
+
+    def execute(self, option: RemediationOption) -> ExecutionResult:
+        if option.action_id != "reduce_worker_concurrency":
+            return ExecutionResult(False, "action is not authorized", failure_reason_code="unauthorized_action")
+        if option.capability is None:
+            return ExecutionResult(False, "promoted capability binding is required", failure_reason_code="capability_not_bound")
+        try:
+            promoted = self.registry.get_promoted(option.capability.capability_id, option.capability.version)
+        except KeyError:
+            return ExecutionResult(False, "promoted capability record does not exist", failure_reason_code="capability_unpromoted")
+        if promoted.content_digest != option.capability.content_digest:
+            return ExecutionResult(False, "promoted capability digest does not match the approved binding", failure_reason_code="capability_digest_mismatch")
+        if "owned_disposable_worker" not in promoted.proposal.allowed_targets:
+            return ExecutionResult(False, "target class is not authorized by the promoted contract", failure_reason_code="target_class_not_authorized")
+        parameters = option.parameters or {}
+        promoted_parameters = {parameter.name: parameter for parameter in promoted.proposal.parameters}
+        if set(parameters) != set(promoted_parameters):
+            return ExecutionResult(False, "executed parameters do not match the promoted contract", failure_reason_code="parameter_contract_mismatch")
+        for name, parameter in promoted_parameters.items():
+            value = parameters[name]
+            if isinstance(value, bool) or not isinstance(value, int) or not (parameter.minimum <= value <= parameter.maximum):
+                return ExecutionResult(False, "target parameter is outside approved bounds", failure_reason_code="parameter_out_of_bounds")
+        if option.target_id != self.target.lab_id:
+            return ExecutionResult(False, "target is not the owned disposable worker", failure_reason_code="unauthorized_target")
+        requested = parameters[promoted_parameters and next(iter(promoted_parameters))]
+        if self.target.current_concurrency <= requested:
+            return ExecutionResult(True, "worker concurrency is already at or below the approved target", attempts=0)
+        previous = self.target.apply(requested)
+        health = self.target.check_health()
+        if health.measurements.get("status_code") == 200:
+            return ExecutionResult(
+                True,
+                "worker concurrency reduced and health verified",
+                attempts=1,
+                health_before="unhealthy",
+                health_after="healthy",
+            )
+        self.target.restore(previous)
+        return ExecutionResult(
+            False,
+            "worker health did not recover; concurrency restored to the previous value",
+            failure_reason_code="verification_failed",
+            attempts=1,
+            health_before="unhealthy",
+            health_after="unhealthy",
+        )
+
+    def close(self) -> None:
+        pass
 
 
 CONTAINER_ACTION_SCRIPTS = {

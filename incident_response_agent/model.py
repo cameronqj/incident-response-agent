@@ -63,6 +63,8 @@ class FakeAnalyzer:
             return "Synthetic marker evidence represents critical memory pressure and an OOM condition for workflow testing."
         if evidence.scenario == Scenario.LOG_STORM:
             return "Synthetic marker evidence represents rapid log and temporary-file growth for workflow testing."
+        if evidence.scenario == Scenario.WORKER_CONCURRENCY:
+            return "Synthetic marker evidence represents worker memory pressure from elevated concurrency for workflow testing."
         return "Synthetic marker evidence represents failed rotation and critically low disk space for workflow testing."
 
 

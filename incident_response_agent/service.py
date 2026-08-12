@@ -4,14 +4,14 @@ import hashlib
 import json
 import uuid
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Callable, Optional
 
 from .audit import safe_metadata, sanitize_text
 from .clock import Clock, SystemClock
 from .executor import RemediationExecutor
 from .model import Analyzer
 from .observability import NoopObservability, OpenTelemetryObservability
-from .policy import SafetyViolation, action_hash, build_option, validate_scenario_action
+from .policy import ALLOWED_ACTIONS, OptionBinding, SafetyViolation, action_hash, build_option, validate_scenario_action
 from .schemas import Decision, DecisionRequest, EventRequest, ModelAssessment, ProposalState, RemediationOption, RunState, RunView, Scenario, ScenarioKind
 from .security import sanitize_event
 from .storage import IdempotencyConflict, SQLiteStore, StoreConflict, StoreNotFound
@@ -60,6 +60,7 @@ class IncidentService:
         expiration_poll_seconds: float = 5.0,
         execution_enabled: bool = True,
         observability: NoopObservability | OpenTelemetryObservability | None = None,
+        option_binding: Optional[Callable[[Scenario, ScenarioKind, str], Optional[OptionBinding]]] = None,
     ):
         self.store = store
         self.telemetry = telemetry
@@ -70,6 +71,7 @@ class IncidentService:
         self.expiration_poll_seconds = expiration_poll_seconds
         self.execution_enabled = execution_enabled
         self.observability = observability or NoopObservability()
+        self.option_binding = option_binding
 
     def _audit(self, run_id: str, trace_id: str, event_type: str, metadata: dict, actor: str, proposal_id: Optional[str] = None) -> None:
         details = dict(metadata)
@@ -91,6 +93,52 @@ class IncidentService:
         if not run:
             raise NotFoundError("run not found")
         self._audit(run_id, run["trace_id"], "recovery_verified", {"result": "healthy" if healthy else "unhealthy"}, actor, proposal_id)
+
+    def record_capability_activation(
+        self,
+        run_id: str,
+        proposal_id: str,
+        capability_id: str,
+        capability_version: int,
+        outcome: str,
+        rollback_applied: bool,
+        actor: str,
+    ) -> None:
+        run = self.store.get_run(run_id)
+        if not run:
+            raise NotFoundError("run not found")
+        if capability_id not in ALLOWED_ACTIONS:
+            raise ValueError("unknown capability identifier")
+        if outcome not in {"succeeded", "failed", "rollback_applied"}:
+            raise ValueError("capability activation outcome is not bounded")
+        self._audit(
+            run_id,
+            run["trace_id"],
+            "capability_activated",
+            {
+                "capability_id": capability_id,
+                "capability_version": capability_version,
+                "outcome": outcome,
+                "rollback_applied": rollback_applied,
+            },
+            actor,
+            proposal_id,
+        )
+        with self.observability.span(
+            "incident.capability.activation",
+            {
+                "incident.capability_id": capability_id,
+                "incident.capability_version": capability_version,
+                "incident.capability_outcome": outcome,
+                "incident.capability_rollback": str(rollback_applied),
+            },
+        ):
+            pass
+
+    def _resolve_option_binding(self, scenario: Scenario, scenario_kind: ScenarioKind, action_id: str) -> Optional[OptionBinding]:
+        if self.option_binding is None:
+            return None
+        return self.option_binding(scenario, scenario_kind, action_id)
 
     @staticmethod
     def _map_store_error(exc: Exception) -> ServiceError:
@@ -182,7 +230,12 @@ class IncidentService:
             )
             self._audit(run_id, trace_id, "model_completed", {"latency_ms": result.latency_ms, "token_count": result.token_count, "retry_count": result.retry_count}, actor)
             self.store.transition_run(run_id, RunState.INVESTIGATING.value, RunState.ASSESSED.value, self.clock.now().isoformat(), trace_id, "structured assessment validated", actor)
-            option = build_option(evidence.scenario, evidence.scenario_kind, result.assessment)
+            option = build_option(
+                evidence.scenario,
+                evidence.scenario_kind,
+                result.assessment,
+                binding=self._resolve_option_binding(evidence.scenario, evidence.scenario_kind, result.assessment.action_id),
+            )
             proposal_id = str(uuid.uuid4())
             created_at = self.clock.now()
             expires = created_at + timedelta(seconds=self.proposal_ttl_seconds)
@@ -261,7 +314,12 @@ class IncidentService:
             assessment = ModelAssessment.model_validate(proposal["assessment"])
             if request.note:
                 assessment = assessment.model_copy(update={"summary": f"{assessment.summary} Revision requested: {sanitize_text(request.note)}"})
-            option = build_option(scenario, scenario_kind, assessment)
+            option = build_option(
+                scenario,
+                scenario_kind,
+                assessment,
+                binding=self._resolve_option_binding(scenario, scenario_kind, assessment.action_id),
+            )
             new_revision = proposal["revision"] + 1
             expires = now + timedelta(seconds=self.proposal_ttl_seconds)
             new_proposal = {

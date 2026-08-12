@@ -5,8 +5,8 @@ import json
 import pytest
 
 from conftest import make_event
-from incident_response_agent.policy import SCENARIO_KIND_ACTIONS, SafetyViolation, action_hash, build_option
-from incident_response_agent.schemas import DecisionRequest, ModelAssessment, RemediationOption, Scenario, ScenarioKind
+from incident_response_agent.policy import ALLOWED_ACTIONS, SCENARIO_KIND_ACTIONS, OptionBinding, SafetyViolation, action_hash, build_option
+from incident_response_agent.schemas import CapabilityBinding, DecisionRequest, ModelAssessment, RemediationOption, Scenario, ScenarioKind
 from incident_response_agent.service import ConflictError
 
 
@@ -26,7 +26,16 @@ def _assessment(action_id: str) -> ModelAssessment:
 )
 def test_every_scenario_accepts_its_deterministic_action(scenario_key, action_id):
     scenario, scenario_kind = scenario_key
-    option = build_option(scenario, scenario_kind, _assessment(action_id))
+    binding = None
+    if ALLOWED_ACTIONS[action_id].get("requires_parameters"):
+        binding = OptionBinding(parameters={"target_concurrency": 4}, target_id="lab-abc")
+    if ALLOWED_ACTIONS[action_id].get("requires_capability"):
+        binding = OptionBinding(
+            parameters={"target_concurrency": 4},
+            target_id="lab-abc",
+            capability=CapabilityBinding(capability_id="reduce_worker_concurrency", version=1, content_digest="1" * 64),
+        )
+    option = build_option(scenario, scenario_kind, _assessment(action_id), binding=binding)
     assert option.action_id == action_id
 
 
