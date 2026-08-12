@@ -335,7 +335,7 @@ class ContainerRemediationExecutor:
                 "--user",
                 f"{uid}:{gid}",
                 "--mount",
-                f"type=bind,src={self.sandbox.root},dst=/incident-sandbox,rw",
+                f"type=bind,src={self.sandbox.root},dst=/incident-sandbox",
                 "--tmpfs",
                 "/tmp:rw,noexec,nosuid,size=16m",
                 self.image,

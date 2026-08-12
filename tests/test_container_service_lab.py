@@ -54,6 +54,7 @@ def _option(action_id: str = "restart_unhealthy_container_service") -> Remediati
 def test_target_launch_is_hardened_owned_and_cleaned(tmp_path, monkeypatch):
     sandbox = DisposableSandbox.create_test_fixture(tmp_path / "sandbox")
     target = DisposableContainerService(sandbox, TEST_IMAGE, "podman", timeout_seconds=2)
+    assert target.health_timeout_seconds == 60.0
     calls: list[list[str]] = []
     removed = False
 
@@ -85,12 +86,15 @@ def test_target_launch_is_hardened_owned_and_cleaned(tmp_path, monkeypatch):
         "--cap-drop=ALL",
         "--security-opt=no-new-privileges",
         "--health-cmd",
+        "--health-interval=2s",
+        "--health-timeout=10s",
+        "--health-retries=2",
     ):
         assert flag in command
     assert "--privileged" not in command
     assert command[command.index("--label") + 1] == f"{LAB_LABEL}={target.lab_id}"
     assert command.count("--mount") == 1
-    assert command[command.index("--mount") + 1] == f"type=bind,src={sandbox.root},dst=/incident-sandbox,rw"
+    assert command[command.index("--mount") + 1] == f"type=bind,src={sandbox.root},dst=/incident-sandbox"
     target.close()
     assert calls[-2][1:5] == ["rm", "-f", "--time", "0"]
     assert removed is True

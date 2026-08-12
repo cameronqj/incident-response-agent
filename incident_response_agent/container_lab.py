@@ -77,6 +77,7 @@ class DisposableContainerService:
         image: str,
         engine: str,
         timeout_seconds: float = 30.0,
+        health_timeout_seconds: float = 60.0,
     ):
         if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", image):
             raise ValueError("container image must be pinned by sha256 digest")
@@ -86,6 +87,7 @@ class DisposableContainerService:
         self.image = image
         self.engine = engine
         self.timeout_seconds = timeout_seconds
+        self.health_timeout_seconds = health_timeout_seconds
         self.lab_id = uuid.uuid4().hex
         self.container_name = f"incident-service-{self.lab_id}"
         self.container_id: str | None = None
@@ -147,13 +149,13 @@ class DisposableContainerService:
             "--user",
             f"{uid}:{gid}",
             "--mount",
-            f"type=bind,src={self.sandbox.root},dst=/incident-sandbox,rw",
+            f"type=bind,src={self.sandbox.root},dst=/incident-sandbox",
             "--tmpfs",
             "/tmp:rw,noexec,nosuid,size=16m",
             "--health-cmd",
             HEALTH_COMMAND,
-            "--health-interval=1s",
-            "--health-timeout=1s",
+            "--health-interval=2s",
+            "--health-timeout=10s",
             "--health-retries=2",
             self.image,
             "python",
@@ -170,7 +172,7 @@ class DisposableContainerService:
             raise ContainerLabError("container_identity_invalid", "container runtime returned an invalid target identity")
         self.container_id = candidate
         try:
-            snapshot, _ = self.wait_for_health("unhealthy", self.timeout_seconds)
+            snapshot, _ = self.wait_for_health("unhealthy", self.health_timeout_seconds)
             return snapshot
         except Exception:
             self.close()
@@ -250,7 +252,7 @@ class DisposableContainerService:
         result = self._run([self.engine, "restart", "--time", "2", before.container_id])
         if result.returncode != 0:
             raise ContainerLabError("target_restart_failed", "disposable service restart failed")
-        after, attempts = self.wait_for_health("healthy", self.timeout_seconds)
+        after, attempts = self.wait_for_health("healthy", self.health_timeout_seconds)
         if after.container_id != before.container_id:
             raise ContainerLabError("target_identity_changed", "container identity changed during restart")
         return RestartObservation(
