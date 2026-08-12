@@ -406,6 +406,61 @@ def test_complete_orchestration_handles_researcher_contract_violation(monkeypatc
     assert result["after"]["cases"][0]["capability_citation"]["capability_id"] == "reduce_worker_concurrency"
 
 
+def test_eval_propagates_research_infrastructure_failure(monkeypatch):
+    """A provider or programming failure in the research phase must fail the experiment,
+    not become a silent reference-contract promotion."""
+    class ExplodingModel(BaseChatModel):
+        @property
+        def _llm_type(self) -> str:
+            return "exploding-model"
+
+        @property
+        def _identifying_params(self) -> dict[str, Any]:
+            return {}
+
+        def bind_tools(self, _tools: Sequence[Any], **_kwargs: Any) -> "ExplodingModel":
+            return self
+
+        def _generate(self, _messages, stop=None, run_manager=None, **_kwargs):
+            del stop, run_manager
+            raise RuntimeError("provider timeout")
+
+    # Model consumption order: before investigation, research phase, after investigation.
+    # Only the research model explodes, so a working before run proves the failure is
+    # specifically in the promotion phase and must propagate instead of substituting.
+    models = iter([
+        ScriptedCapabilityApplicationModel(responses=[*_diagnostic_responses(), _tool("search_approved_capabilities"), _diagnosis_message(None)]),
+        ExplodingModel(),
+        ScriptedCapabilityApplicationModel(responses=[*_diagnostic_responses(), _tool("search_approved_capabilities"), _diagnosis_message(None)]),
+    ])
+    monkeypatch.setattr(capability_eval, "create_live_investigation_model", lambda _settings: next(models))
+
+    class FakeResults(list):
+        def __init__(self, row):
+            super().__init__([row])
+            self.experiment_name = "experiment"
+            self.experiment_id = "experiment-id"
+            self.url = None
+
+    class FakeClient:
+        def evaluate(self, target, *, data, evaluators, experiment_prefix, **kwargs):
+            example = list(data)[0]
+            outputs = target(example.inputs)
+            evaluations = [
+                SimpleNamespace(key=evaluator.__name__, score=evaluator(example.inputs, outputs, example.outputs))
+                for evaluator in evaluators
+            ]
+            return FakeResults({
+                "run": SimpleNamespace(outputs=outputs, error=None, total_tokens=None, total_cost=None),
+                "example": example,
+                "evaluation_results": {"results": evaluations},
+            })
+
+    monkeypatch.setattr(capability_eval, "Client", lambda: FakeClient())
+    with pytest.raises(RuntimeError, match="provider timeout"):
+        run_capability_application_evaluation(Settings(), upload_results=False)
+
+
 def _proposal_message(proposal) -> AIMessage:
     return AIMessage(content="", tool_calls=[{
         "name": "CapabilityResearchProposal",

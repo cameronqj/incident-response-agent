@@ -24,7 +24,6 @@ from .capability_learning import (
     build_capability_tools,
     create_capability_research_agent,
     research_capability_with_recovery,
-    reviewer_corrected_capability_proposal,
     simulated_reviewer_revision,
 )
 from .config import Settings
@@ -329,16 +328,16 @@ def run_capability_application_evaluation(settings: Settings, *, upload_results:
 
         research_trace = InvestigationTrace()
         research_model = create_live_investigation_model(evaluation_settings)
-        try:
-            proposal, recovered = research_capability_with_recovery(
-                create_capability_research_agent(research_model, ConcurrencyWorkerLab(), research_trace),
-                research_trace,
-                f"capability-promotion-{uuid4().hex}",
-            )
-        except Exception as exc:
-            # The model could not produce a valid structured proposal at all.
-            proposal = reviewer_corrected_capability_proposal()
-            recovered = True
+        # research_capability_with_recovery handles the expected failures itself:
+        # an invalid structured output or an observed-evidence contract violation
+        # salvages (or substitutes) the contract and reports recovered=True.
+        # Infrastructure, provider, or programming errors propagate and fail the
+        # experiment rather than becoming a silent reference-contract promotion.
+        proposal, recovered = research_capability_with_recovery(
+            create_capability_research_agent(research_model, ConcurrencyWorkerLab(), research_trace),
+            research_trace,
+            f"capability-promotion-{uuid4().hex}",
+        )
         original = learned_registry.submit(proposal)
         revision = learned_registry.revise(
             original.candidate_id,

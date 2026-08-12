@@ -871,6 +871,11 @@ class CapabilityRegistry:
         )
 
     def record_activation(self, record: CapabilityActivationRecord) -> None:
+        # Activation history must reference a real promoted record. get_promoted
+        # raises KeyError for an unknown capability or version and also
+        # digest-verifies the stored contract, so a tampered or unpromoted
+        # record cannot enter the activation history.
+        self.get_promoted(record.capability_id, record.version)
         with self.lock:
             self.connection.execute(
                 "INSERT INTO capability_activations(activation_id, run_id, proposal_id, capability_id, version, target_id, outcome, verification, rollback_applied, occurred_at, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",

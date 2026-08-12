@@ -674,7 +674,8 @@ def test_service_rejects_unknown_capability_activation(tmp_path):
 def test_activation_record_is_auditable():
     registry = CapabilityRegistry(":memory:")
     try:
-        registry.record_activation(_activation_record())
+        _, binding = _promote_capability(registry)
+        registry.record_activation(_activation_record(capability_id=binding.capability_id, version=binding.version))
         rows = registry.list_activations("reduce_worker_concurrency")
         assert len(rows) == 1
         assert rows[0].outcome == "rollback_applied"
@@ -684,15 +685,30 @@ def test_activation_record_is_auditable():
         registry.close()
 
 
-def _activation_record():
+def test_activation_record_rejects_unknown_promoted_version():
+    """Activation history must reference a real promoted record."""
+    registry = CapabilityRegistry(":memory:")
+    try:
+        _, binding = _promote_capability(registry)
+        registry.record_activation(_activation_record(capability_id=binding.capability_id, version=binding.version))
+        with pytest.raises(KeyError):
+            registry.record_activation(_activation_record(capability_id=binding.capability_id, version=binding.version + 1))
+        with pytest.raises(KeyError):
+            registry.record_activation(_activation_record(capability_id="never_promoted", version=1))
+        assert len(registry.list_activations("reduce_worker_concurrency")) == 1
+    finally:
+        registry.close()
+
+
+def _activation_record(*, capability_id: str = "reduce_worker_concurrency", version: int = 1) -> CapabilityActivationRecord:
     from datetime import datetime, timezone
 
     return CapabilityActivationRecord(
         activation_id="act-1",
         run_id="run-1",
         proposal_id="proposal-1",
-        capability_id="reduce_worker_concurrency",
-        version=1,
+        capability_id=capability_id,
+        version=version,
         target_id="lab-abc",
         outcome="rollback_applied",
         verification=False,
