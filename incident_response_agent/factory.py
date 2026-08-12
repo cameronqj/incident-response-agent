@@ -38,6 +38,7 @@ def build_service(settings: Settings | None = None) -> IncidentService:
             settings.container_image,
             engine or "",
             settings.execution_timeout_seconds,
+            settings.container_health_timeout_seconds,
         )
         try:
             target.start()

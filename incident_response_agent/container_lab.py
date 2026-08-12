@@ -39,9 +39,15 @@ class Handler(BaseHTTPRequestHandler):
 HTTPServer(('127.0.0.1', 8080), Handler).serve_forever()
 """
 
-HEALTH_COMMAND = (
-    "python -c \"import urllib.request; "
-    "urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=1)\""
+HEALTH_PROBE = (
+    "import urllib.request, urllib.error, sys\n"
+    "try:\n"
+    "    urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=1)\n"
+    "    sys.exit(0)\n"
+    "except urllib.error.HTTPError as e:\n"
+    "    sys.exit(2 if e.code == 503 else 3)\n"
+    "except Exception:\n"
+    "    sys.exit(1)\n"
 )
 
 
@@ -77,6 +83,7 @@ class DisposableContainerService:
         image: str,
         engine: str,
         timeout_seconds: float = 30.0,
+        health_timeout_seconds: float = 60.0,
     ):
         if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", image):
             raise ValueError("container image must be pinned by sha256 digest")
@@ -86,6 +93,7 @@ class DisposableContainerService:
         self.image = image
         self.engine = engine
         self.timeout_seconds = timeout_seconds
+        self.health_timeout_seconds = health_timeout_seconds
         self.lab_id = uuid.uuid4().hex
         self.container_name = f"incident-service-{self.lab_id}"
         self.container_id: str | None = None
@@ -147,14 +155,9 @@ class DisposableContainerService:
             "--user",
             f"{uid}:{gid}",
             "--mount",
-            f"type=bind,src={self.sandbox.root},dst=/incident-sandbox,rw",
+            f"type=bind,src={self.sandbox.root},dst=/incident-sandbox",
             "--tmpfs",
             "/tmp:rw,noexec,nosuid,size=16m",
-            "--health-cmd",
-            HEALTH_COMMAND,
-            "--health-interval=1s",
-            "--health-timeout=1s",
-            "--health-retries=2",
             self.image,
             "python",
             "-c",
@@ -170,7 +173,7 @@ class DisposableContainerService:
             raise ContainerLabError("container_identity_invalid", "container runtime returned an invalid target identity")
         self.container_id = candidate
         try:
-            snapshot, _ = self.wait_for_health("unhealthy", self.timeout_seconds)
+            snapshot, _ = self.wait_for_health("unhealthy", self.health_timeout_seconds)
             return snapshot
         except Exception:
             self.close()
@@ -199,13 +202,35 @@ class DisposableContainerService:
             raise ContainerLabError("target_security_mismatch", "container unexpectedly has privileged mode")
         return record
 
+    def _probe_health(self) -> str:
+        """Determine health by exec'ing the probe into the owned container.
+
+        Uses the same `docker exec` path as every other lab operation, which
+        works on all runners; Docker's daemon-side healthcheck state machine was
+        found to hang on some shared-runner pools while exec works normally.
+        An exec that cannot complete (container not ready, engine contended) is
+        reported as ``starting`` so the caller keeps waiting.
+        """
+        if self.container_id is None:
+            raise ContainerLabError("target_container_missing", "disposable service has not been started")
+        try:
+            result = self._run([self.engine, "exec", self._identity(), "python", "-c", HEALTH_PROBE], timeout=10)
+        except ContainerLabError:
+            return "starting"
+        # exit 0 = HTTP 200 (healthy); exit 2 = HTTP 503 (up, first boot);
+        # any other exit (connection refused, exec not ready) = still starting.
+        if result.returncode == 0:
+            return "healthy"
+        if result.returncode == 2:
+            return "unhealthy"
+        return "starting"
+
     def snapshot(self) -> ContainerSnapshot:
         self.sandbox.validate()
         if self.container_id is None:
             raise ContainerLabError("target_container_missing", "disposable service has not been started")
         record = self._inspect_raw()
         state = record.get("State") or {}
-        health = state.get("Health") or {}
         boot_file = self.sandbox.resolve_child("services/boot-count")
         try:
             boot_count = int(boot_file.read_text(encoding="utf-8"))
@@ -214,7 +239,7 @@ class DisposableContainerService:
         return ContainerSnapshot(
             container_id=self.container_id,
             runtime_status=str(state.get("Status", "unknown")),
-            health_status=str(health.get("Status", "unknown")),
+            health_status=self._probe_health(),
             boot_count=boot_count,
         )
 
@@ -229,18 +254,7 @@ class DisposableContainerService:
                 return last, attempts
             time.sleep(0.25)
         actual = last.health_status if last else "unknown"
-        detail = ""
-        try:
-            state = self._inspect_raw().get("State") or {}
-            health = state.get("Health") or {}
-            logs = health.get("Log") or []
-            if logs:
-                output = str(logs[-1].get("Output", "")).replace(str(self.sandbox.root), "<sandbox>").strip()[:512]
-                if output:
-                    detail = f": {output}"
-        except ContainerLabError:
-            pass
-        raise ContainerLabError("target_health_timeout", f"target health remained {actual}, expected {expected}{detail}")
+        raise ContainerLabError("target_health_timeout", f"target health remained {actual}, expected {expected}")
 
     def restart_and_wait(self) -> RestartObservation:
         before = self.snapshot()
@@ -250,7 +264,15 @@ class DisposableContainerService:
         result = self._run([self.engine, "restart", "--time", "2", before.container_id])
         if result.returncode != 0:
             raise ContainerLabError("target_restart_failed", "disposable service restart failed")
-        after, attempts = self.wait_for_health("healthy", self.timeout_seconds)
+        after, attempts = self.wait_for_health("healthy", self.health_timeout_seconds)
+        # The host-side read of the bind-mounted boot-count file can lag the
+        # container-side write by a few milliseconds after a restart; re-read
+        # until it reflects the new boot so the captured observation is coherent
+        # with the healthy health signal.
+        settle_deadline = time.monotonic() + 1.0
+        while time.monotonic() < settle_deadline and after.boot_count <= before.boot_count:
+            time.sleep(0.05)
+            after = self.snapshot()
         if after.container_id != before.container_id:
             raise ContainerLabError("target_identity_changed", "container identity changed during restart")
         return RestartObservation(

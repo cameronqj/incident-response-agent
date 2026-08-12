@@ -224,3 +224,19 @@ A review identified that promotion was not technically bound to execution: the e
 The immutable proposal now carries a `CapabilityBinding` (promoted capability id, version, content digest), the executed parameter set, the owned target id, and the target-class authorization (`allowed_targets` is a `owned_disposable_worker` contract enforced at execution, not an evidence reference). The `ConcurrencyReductionExecutor` revalidates the binding against the capability registry before any side effect: an unpromoted version, a tampered digest, an unbound option, a parameter set that does not match the promoted schema, or a foreign target each fails closed with a distinct reason code (covered by `test_executor_revalidates_registry_record_at_execution`). `build_option` requires the binding for capability-backed actions and rejects a mismatched capability id. Evidence scope is now deterministically enforced in both application evals: when an agent has opened a promoted record, application code rejects any final diagnosis citing a category outside the promoted required set — the `evidence_scope` directive is prompt-side steering, but the evaluation is a hard application check.
 
 The live demo re-run shows the bound proposal: the immutable option carries `capability_id: reduce_worker_concurrency`, the promoted content digest, and `target_concurrency: 4`, executes to `succeeded`, and the executor revalidated the record during execution. Contract-violation handling now first attempts `contract_violation_revision` (stripping unobserved signals from the model's own proposal) and only substitutes the reference contract when salvage is impossible; both paths are unit-tested. This proves promotion authorizing execution end to end, not merely promotion and execution occurring sequentially.
+
+## 2026-08-12 container health-check timing hardening
+
+The disposable-service container integration test flaked on some CI runners: the owned service container stayed in Docker `starting` for the whole wait window, failing `target health remained starting, expected unhealthy`. The failing runners were runner-consistent (all retries on the same runner failed) while other runners passed, and the same runners' ordinary `docker exec`-based tests passed — indicating the Docker daemon-side healthcheck state machine can stall on some shared-runner pools. The fix replaces the daemon healthcheck with an application-owned probe:
+
+- The lab now runs its own bounded health poll: `docker exec` of a Python probe against the service's `/health` endpoint (exit 0 = healthy, non-zero = unhealthy, exec-not-ready = starting). This uses the same exec path as every other lab operation, which works on all observed runners.
+- Removed `--health-cmd/--health-interval/--health-timeout/--health-retries` from the service container; health is owned by the application.
+- Added `container_health_timeout_seconds` (default 60, env `CONTAINER_HEALTH_TIMEOUT_SECONDS`) for the unhealthy/healthy waits, separate from the execution-bound timeout.
+- The host-side read of the bind-mounted boot-count file can lag the container-side write by a few milliseconds after a restart; `restart_and_wait` re-reads until the captured observation is coherent with the healthy health signal (bounded 1 s settle).
+- Dropped the `--mount ...,rw` shorthand (removed in newer Docker engines; `rw` is the bind default) — a portability fix for the same engine-version variance class.
+- The workflow retries the container suite up to 3 times (bounded, fails loudly after); transient load variance self-heals, deterministic failures do not.
+
+| Reproducible check | Command | Result |
+| --- | --- | --- |
+| Full offline regression | `.venv/bin/python -m pytest -m 'not integration and not live'` | 201 passed; 18 deselected |
+| Container integration | `RUN_CONTAINER_TESTS=1 .venv/bin/python -m pytest -m 'integration and not live'` | 14 passed; 205 deselected |

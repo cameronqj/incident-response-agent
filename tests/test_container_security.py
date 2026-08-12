@@ -53,7 +53,7 @@ def test_container_command_enforces_limits_and_exact_mount(tmp_path, monkeypatch
     assert "--privileged" not in command
     assert command[command.index("--user") + 1].split(":", 1)[0] != "0"
     assert command.count("--mount") == 1
-    assert command[command.index("--mount") + 1] == f"type=bind,src={sandbox.root},dst=/incident-sandbox,rw"
+    assert command[command.index("--mount") + 1] == f"type=bind,src={sandbox.root},dst=/incident-sandbox"
     assert command[command.index("--tmpfs") + 1] == "/tmp:rw,noexec,nosuid,size=16m"
     assert TEST_IMAGE in command
     container_name = command[command.index("--name") + 1]

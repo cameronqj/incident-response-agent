@@ -94,6 +94,9 @@ def _exercise_http_cycle(settings: Settings) -> tuple[dict, str, str]:
 
 @pytest.mark.integration
 def test_real_unhealthy_service_runs_through_authenticated_agent_flow(tmp_path):
+    # Health is owned by the application probe (docker exec of HEALTH_PROBE);
+    # the daemon healthcheck state machine is not used, so shared-runner
+    # healthcheck stalls cannot leave the container stuck in "starting".
     if os.getenv("RUN_CONTAINER_TESTS") != "1":
         pytest.skip("set RUN_CONTAINER_TESTS=1 to run container integration")
     _, engine_name = _container_engine()

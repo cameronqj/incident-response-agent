@@ -53,6 +53,7 @@ class Settings:
     execution_engine: str = "container"
     container_image: str = "docker.io/library/python@sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed33568873133f8fc69980419df"
     execution_timeout_seconds: float = 30.0
+    container_health_timeout_seconds: float = 60.0
     otel_enabled: bool = False
     otel_service_name: str = "incident-response-agent"
     otel_exporter_otlp_endpoint: str | None = None
@@ -82,6 +83,7 @@ class Settings:
             execution_engine=os.getenv("EXECUTION_ENGINE", cls.execution_engine),
             container_image=os.getenv("CONTAINER_IMAGE", cls.container_image),
             execution_timeout_seconds=float(os.getenv("EXECUTION_TIMEOUT_SECONDS", cls.execution_timeout_seconds)),
+            container_health_timeout_seconds=float(os.getenv("CONTAINER_HEALTH_TIMEOUT_SECONDS", cls.container_health_timeout_seconds)),
             otel_enabled=_strict_bool("OTEL_ENABLED", os.getenv("OTEL_ENABLED", "0")),
             otel_service_name=os.getenv("OTEL_SERVICE_NAME", cls.otel_service_name),
             otel_exporter_otlp_endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT") or None,
