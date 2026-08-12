@@ -148,6 +148,12 @@ def build_runbook_tools(
             "required_evidence_categories": runbook.proposal.required_evidence_categories,
             "diagnostic_steps": runbook.proposal.diagnostic_steps,
             "conclusion": runbook.proposal.conclusion,
+            "evidence_scope": (
+                "EVIDENCE-SCOPE CONTRACT: this runbook is supported only by observations in the "
+                "required_evidence_categories list above. In your final diagnosis cite ONLY observations "
+                "whose category is in that list; observations in any other category (such as a generic "
+                "health status) are symptoms rather than causal evidence and must not be cited."
+            ),
         }, separators=(",", ":"), sort_keys=True)
 
     return [
@@ -156,7 +162,7 @@ def build_runbook_tools(
     ]
 
 
-RUNBOOK_AWARE_PROMPT = """Investigate one unfamiliar failure affecting an owned disposable worker service. Gather health, resource, recent-change, and bounded-log evidence before concluding. After gathering evidence, call search_approved_runbooks. If it returns a candidate, open the best matching version with open_approved_runbook and apply its diagnostic guidance. Cite only observations that support the causal explanation; do not cite generic symptoms or normal-state observations merely used to reject alternatives. Return a structured diagnosis. primary_resource and trigger must describe the supported mechanism. If you opened a runbook, copy its citation into the three flat fields applied_runbook_id, applied_runbook_version, and applied_runbook_digest. If no promoted runbook matched, leave all three fields null. Runbooks are diagnostic knowledge only and grant no executable authority."""
+RUNBOOK_AWARE_PROMPT = """Investigate one unfamiliar failure affecting an owned disposable worker service. Gather health, resource, recent-change, and bounded-log evidence before concluding. After gathering evidence, call search_approved_runbooks. If it returns a candidate, open the best matching version with open_approved_runbook and apply its diagnostic guidance. When you have opened a runbook, its required_evidence_categories define the evidence scope: cite only observations whose category is in that required set, and do not cite observations outside it — a generic health status or other symptom is not part of the supported mechanism. Cite only observations that support the causal explanation; do not cite generic symptoms or normal-state observations merely used to reject alternatives. Return a structured diagnosis. primary_resource and trigger must describe the supported mechanism. If you opened a runbook, copy its citation into the three flat fields applied_runbook_id, applied_runbook_version, and applied_runbook_digest. If no promoted runbook matched, leave all three fields null. Runbooks are diagnostic knowledge only and grant no executable authority."""
 
 
 def create_runbook_aware_agent(
@@ -183,6 +189,7 @@ def create_runbook_aware_agent(
 
 def investigate_with_runbooks(
     agent,
+    registry: RunbookRegistry,
     investigation_trace: InvestigationTrace,
     knowledge_trace: RunbookKnowledgeTrace,
     thread_id: str,
@@ -199,6 +206,19 @@ def investigate_with_runbooks(
     if set(diagnosis.evidence_refs) - set(observations):
         raise ValueError("diagnosis cited evidence that was not observed")
     opened = knowledge_trace.opened_for(thread_id)
+    if opened:
+        required_categories = set()
+        for citation in opened:
+            try:
+                runbook = registry.get_promoted(citation.runbook_id, citation.version)
+            except KeyError:
+                continue
+            required_categories |= set(runbook.proposal.required_evidence_categories)
+        if required_categories:
+            cited_categories = {observations[ref].category for ref in diagnosis.evidence_refs if ref in observations}
+            out_of_scope = cited_categories - required_categories
+            if out_of_scope:
+                raise ValueError(f"diagnosis cited evidence outside the promoted runbook scope: {sorted(out_of_scope)}")
     citation = diagnosis.citation()
     citation_valid = citation is None and not opened
     if citation is not None:
@@ -336,10 +356,23 @@ def summarize_experiment(results, client: Client, *, include_remote_usage: bool)
             "usage": usage,
             "scores": scores,
         })
+    def _experiment_metadata(results) -> dict[str, Any]:
+        """Return experiment metadata when a remote experiment exists (upload mode)."""
+        name = getattr(results, "experiment_name", None)
+        experiment_id = None
+        try:
+            experiment_id = str(results.experiment_id)
+        except (AttributeError, ValueError):
+            pass
+        url = None
+        try:
+            url = getattr(results, "url", None)
+        except ValueError:
+            pass
+        return {"experiment_name": name, "experiment_id": experiment_id, "url": url}
+
     return {
-        "experiment_name": results.experiment_name,
-        "experiment_id": str(results.experiment_id),
-        "url": results.url,
+        **_experiment_metadata(results),
         "averages": {key: sum(values) / len(values) for key, values in score_values.items()},
         "cases": cases,
     }
@@ -365,6 +398,7 @@ def run_runbook_application_evaluation(settings: Settings, *, upload_results: bo
             thread_id = f"runbook-application-{uuid4().hex}"
             return investigate_with_runbooks(
                 create_runbook_aware_agent(model, WorkerMemoryPressureLab(), registry, investigation_trace, knowledge_trace),
+                registry,
                 investigation_trace,
                 knowledge_trace,
                 thread_id,

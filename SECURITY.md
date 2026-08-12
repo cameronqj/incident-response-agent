@@ -11,6 +11,7 @@ This repository is a bounded POC, not a production incident-response service.
 - Real host and production-service inspection and remediation are not implemented. The opt-in service lab can inspect and restart only its own disposable target.
 - OpenTelemetry export is disabled by default, uses a strict attribute allowlist, and does not replace sanitized SQLite audit records.
 - The Deep Agent can inspect only one owned synthetic site through typed read-only tools. Its thread-local virtual filesystem is denied by defensive permissions, and its state backend provides no shell execution capability.
+- The capability path is governed end to end: the agent proposes a typed contract, application code owns review, promotion, and executor implementation, and activation requires the existing immutable proposal and hash-bound human approval against one owned disposable worker with verification and rollback.
 
 ## Threat model
 
@@ -26,6 +27,8 @@ This repository is a bounded POC, not a production incident-response service.
 | Excessive agent activity | Provider timeout/retries, diagnostic outputs, schemas, and graph recursion are bounded | Cost budgets and provider-side quotas remain operator responsibilities |
 | Secret leakage | Tokens never enter service records; assignment-style and JSON-shaped credentials, home paths, and private IPs are redacted before event/audit persistence | Operators must still protect process environment and local `.env` |
 | Oversized or malicious model output | Provider responses are read through a 65,536-byte limit; strict schemas bound text, lists, and fields before persistence; model output cannot define commands or targets | Model assessment quality and provider availability remain variable |
+| Capability misuse | The agent proposes only a typed contract; application code owns review, promotion, and executor implementation; concrete runtime values are chosen in code and bound into the action hash; the executor rejects any action, target, or parameter outside approved bounds; promotion grants no execution authority | A containerized worker variant, additional capabilities, and production targets are not implemented; the SQLite registry is not an adversarial integrity boundary |
+| Capability activation blast radius | One owned disposable worker target only, deterministic health verification, bounded rollback to the previous value, auditable activation outcome | No fleet or production activation, and no automatic regression-case generation from outcomes |
 | Stale proposal execution | Scenario-bound digest, TTL recheck, atomic execution claim | Claimed executions are not automatically recovered after process crash; reconciliation is tracked in [Issue #2](https://github.com/cameronqj/incident-response-agent/issues/2) |
 | Duplicate delivery or requests | Unique idempotency key and transactional create-or-return | Callers must poll an in-progress duplicate run |
 | Concurrent decisions | SQLite immediate transactions and conditional updates | SQLite remains a single-node POC store |

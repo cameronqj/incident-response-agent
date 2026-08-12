@@ -134,8 +134,93 @@ The final runbook phase used the versioned `incident-response-agent-runbook-appl
 | Before `runbook-before-learning-v1-d8b12276` | `150539c8-170b-452c-acb7-33f9980a97eb` | 1.00 | 1.00 | 0.00 | 4 diagnostic calls + search | 10,474 ms | 7,013 | 0.00 |
 | After `runbook-after-learning-v1-2bcf82f4` | `b337072c-0dfa-4549-b72d-c3d1286a8023` | 1.00 | 1.00 | 0.00 | 4 diagnostic calls + search + open | 12,692 ms | 10,837 | 1.00 |
 
-The later agent found, opened, and exactly cited `worker-oom-under-high-concurrency` version 1 with content digest `6f1c761692ff46037202546690fdee80539b089ab11197f84c5cddf140d220ec`. Its diagnosis remained correct and retained all required evidence. It also retained the generic health observation, so distractor avoidance did not improve and this run does not establish that retrieval improved or changed its reasoning. The explicit citation improved from 0 to 1 at the cost of one additional tool call, 2,218 ms, and 3,824 tokens in this single stochastic comparison.
+The later agent found, opened, and exactly cited `worker-oom-under-high-concurrency` version 1 with content digest `6f1c761692ff46037202546690fdee80539b089ab11197f84c5cddf140d220ec`. Its diagnosis remained correct and retained all required evidence. It also retained the generic health observation, so distractor avoidance did not improve and this run does not establish that retrieval improved or changed its evidence selection. The explicit citation improved from 0 to 1 at the cost of one additional tool call, 2,218 ms, and 3,824 tokens in this single stochastic comparison.
 
 The offline visibility regression verifies that pending, rejected, superseded, and evaluation-failed candidates return no match; only the promoted immutable version is searchable; and direct or search-based access to a digest-tampered promoted record fails closed. A forged citation is also rejected unless the exact version was returned by search and opened in the same investigation thread.
 
 One earlier after-learning attempt retrieved and opened the correct version but the provider encoded a nested structured-output citation as a JSON string. Deep Agents retried the invalid output until its recursion limit. The provider-facing schema now uses three flat citation fields and reconstructs the typed citation at the application boundary; the regression suite covers that contract. This evidence demonstrates reviewed knowledge affecting a later Deep Agent trajectory, not statistically significant quality improvement, production incident learning, or executable authority.
+
+## 2026-08-12 governed capability-learning POC
+
+This discrete capability path is the roadmap's follow-on slice: a Deep Agent proposes a typed capability contract for one owned disposable worker, an application-owned reviewer and deterministic hidden-case gate promote it, and a later incident activates it through the existing immutable proposal and hash-bound approval with verification and rollback. Promotion changes only the capability registry and grants no execution authority; the capability and runbook registries remain separate.
+
+| Evidence | Command | Result | Scenario kind |
+| --- | --- | --- | --- |
+| Targeted capability research, policy, review, promotion, retrieval, separation, executor, activation, rollback, and orchestration checks | `.venv/bin/python -m pytest tests/test_capability_learning.py` | 22 passed | `synthetic_marker` |
+| Full offline regression | `.venv/bin/python -m pytest -m 'not integration and not live'` | 184 passed; 18 deselected | `synthetic_marker` plus container-policy simulation |
+
+The deterministic checks verify that the research agent sees only observed evidence and never the hidden expected capability id; that only application review decisions with a passing gate promote; that approval alone cannot bypass a failing gate; that revisions supersede the original and pass the same gate; that rejected, superseded, evaluation-failed, and digest-tampered candidates are never retrievable; that promoted capabilities are invisible to the runbook registry and vice versa; that the executor rejects any action, target, or parameter outside the approved bounds; that repeated activation at or below the target is an idempotent no-op; and that a forced verification failure rolls back the previous concurrency and is auditable. The full orchestration test runs research → review revision → promotion → later incident → activation → failed verification → rollback with scripted models, matching the demo path without live inference or LangSmith retention.
+
+The live `capability-learning-demo` reuses the configured Deep Agents endpoint and an explicitly simulated reviewer; it requires `OPENCODE_KEY` exactly like the other live demos and never falls back to demo inference. This demonstrates one governed executable-capability lifecycle with one-target activation and rollback, not fleet-wide capability activation, production safety, containerized worker execution, or SREGym-style cluster evaluation.
+
+### Live-inference observation (2026-08-12)
+
+- Endpoint label: `configured-openai-compatible-deep-agent`
+- Configured endpoint: `https://opencode.ai/zen/go/v1`
+- Model: `qwen3.6-plus`
+- Real external model: yes
+- Promotion: `.venv/bin/python -m incident_response_agent.cli capability-learning-demo --database-path .data/capability-live.sqlite3 --simulate-review revise-approve` — the live researcher's first proposal cited a prerequisite signal that no diagnostic returned; the application rejected it as a contract violation. The model proposal violated the observed-evidence contract, so the POC stripped the unobserved signals from the model's own proposal (or substituted an application-owned reference contract when salvage was impossible) and passed that contract through revision and promotion; `reduce_worker_concurrency` version 1 was promoted. Activation of a later incident proposal carried the promoted capability binding (id, version, digest) and concrete application-chosen parameters `target_concurrency=4`; execution revalidated the binding against the registry and succeeded; health returned HTTP 200 and final concurrency was 4.
+- Rollback: `--fail-verification` on the same flow forced the post-activation health check to fail; the run ended `failed`, the executor restored concurrency 12, and the activation record reported `rollback_applied=true`.
+
+The live researcher's unobserved-prerequisite failure is the same over-generalization the runbook evidence documented; the governed reviewer path absorbed it without weakening the observed-evidence contract. This is one controlled live demonstration, not general capability-proposal quality, production capability activation, or statistical significance.
+
+## 2026-08-12 capability-application experiment
+
+The final capability phase used the `incident-response-agent-capability-application-v1` dataset shape and two fresh Deep Agent investigations over the same unfamiliar worker-memory incident. The baseline registry was empty. Between runs, a live researcher proposed a candidate (again violating the observed-evidence contract; the simulated reviewer corrected it), the deterministic five-case gate promoted `reduce_worker_concurrency` version 1, and the second agent could access the promoted registry only through the read-only `search_approved_capabilities` and `open_approved_capability` tools. Reproduced without LangSmith retention (`--no-upload`); the same local case and evaluators are used in both modes.
+
+| Reproducible check | Command | Result |
+| --- | --- | --- |
+| Targeted application, orchestration, citation, mismatch, evaluator, and fallback checks | `.venv/bin/python -m pytest tests/test_capability_application_eval.py` | 8 passed |
+| Full offline regression | `.venv/bin/python -m pytest -m 'not integration and not live'` | 194 passed; 18 deselected |
+| Live before/after with scripted review | `.venv/bin/python -m incident_response_agent.cli capability-application-eval --no-upload` | before and after both completed |
+
+| Experiment | Diagnosis | Required evidence | Distractor avoidance | Tool coverage | Capability correct | Exact capability citation | Latency |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Before (empty registry) | 1.00 | 1.00 | 0.00 | 1.00 | 0.00 | 0.00 | 11,060 ms |
+| After (promoted capability) | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 1.00 | 13,008 ms |
+
+The later agent searched, opened, and exactly cited `reduce_worker_concurrency` version 1 with content digest `d3a78ad553c4472e75292c107acff8ad8e939a553319cfba9115c004917714ed`, and its proposed capability became correct (0 → 1). Its diagnosis, required evidence, and tool coverage were already correct and stayed correct; it retained the generic health observation, so distractor avoidance did not improve and this run does not establish that retrieval improved its evidence selection. The explicit citation improved from 0 to 1 at the cost of one additional tool call and roughly two seconds of latency. The before run's wrong proposed capability and the after run's exact citation are the observable difference the governed capability loop is designed to produce; this is one stochastic live comparison, not statistical significance. The offline visibility regression verifies that unpromoted states are never searchable and that a citation must match a capability actually opened in the same investigation thread.
+
+## 2026-08-12 evidence-scope steering supplement
+
+Both application evals previously showed flat distractor avoidance: the after-learning agent opened the promoted knowledge but still cited the generic `health-1` observation. The opened-knowledge tools now return an explicit `evidence_scope` contract — cite only observations whose category is in the promoted `required_evidence_categories`; other categories (such as a generic health status) are symptoms, not causal evidence — and both system prompts reinforce the same rule when a promoted record is opened. Re-running both live evals with that steering:
+
+| Experiment | Distractor avoidance before | Distractor avoidance after | Delta | After evidence_refs | Latency before/after |
+| --- | ---: | ---: | ---: | --- | ---: |
+| Capability (`capability-application-eval --no-upload`) | 0.00 | 1.00 | +1.00 | `resources-1`, `changes-1`, `logs-1` | 11,034 / 12,176 ms |
+| Runbook (`runbook-application-eval --no-upload`) | 0.00 | 1.00 | +1.00 | `resources-1`, `changes-1`, `logs-1` | 9,966 / 12,014 ms |
+
+In both after runs the agent cited exactly the promoted contract's required evidence categories and dropped the generic health observation; the before runs kept the same `health-1`, `resources-1`, `changes-1`, `logs-1` shape as the earlier flat runs. The capability after run also retained the correct proposed capability and exact citation; the runbook after run retained the exact runbook citation. This is the first measured evidence that retrieval changed evidence selection, not only the action or citation choice. The added `evidence_scope` field and prompt reinforcement are the only mechanism changes; each comparison is one stochastic live run, not statistical significance, and the cost is the extra open call plus roughly one to two seconds of latency.
+
+| Reproducible check | Command | Result |
+| --- | --- | --- |
+| Steering directive presence, orchestration, citation, mismatch, evaluator, and fallback checks | `.venv/bin/python -m pytest tests/test_capability_application_eval.py tests/test_runbook_application_eval.py` | 17 passed |
+| Full offline regression | `.venv/bin/python -m pytest -m 'not integration and not live'` | 196 passed; 18 deselected |
+
+### Steering stability across three additional live runs each (2026-08-12)
+
+The steering supplement above was a single live comparison per loop. To test stability, both evals were re-run three more times each with fresh in-memory registries and the same model, always `--no-upload`:
+
+| Loop | Run | Violation | After: Dx | After: evidence | After: distractor | After: coverage | After: capability/runbook | After: citation |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Capability | 1 | yes | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+| Capability | 2 | yes | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+| Capability | 3 | yes | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+| Runbook | 1 | — | 1.00 | 1.00 | 1.00 | 1.00 | — | 1.00 |
+| Runbook | 2 | — | 1.00 | 1.00 | 1.00 | 1.00 | — | 1.00 |
+| Runbook | 3 | — | 1.00 | 1.00 | 1.00 | 1.00 | — | 1.00 |
+
+In all six after-runs the agent cited exactly the promoted contract's `required_evidence_categories` (`resources-1`, `changes-1`, `logs-1`) and dropped the generic `health-1` observation, matching the original steering run. The before side is variable: five of six before-runs cited `health-1` (distractor avoidance 0.00), while one capability before-run happened to omit it (1.00) — the pre-steering agent sometimes complies by chance. The after-side effect is therefore stable across the original plus three additional runs per loop, while the before baseline has run-to-run noise. Researcher contract violations occurred in all four capability promotion phases (the live researcher consistently proposes an unobserved prerequisite; the application strips it from the model proposal before review). Latency cost of the after path remained roughly one to two seconds per run. Four runs per loop is still a small stochastic sample, not statistical significance.
+
+## 2026-08-12 promotion-to-execution binding hardening
+
+A review identified that promotion was not technically bound to execution: the executed action remained hardcoded in `ALLOWED_ACTIONS`, the immutable proposal carried no promoted capability version or digest, and execution did not revalidate the registry record. This phase closes that gap.
+
+| Reproducible check | Command | Result |
+| --- | --- | --- |
+| Binding revalidation (stale, tampered, unpromoted, unbound, contract mismatch), salvage, target-class, scope-enforcement, and orchestration checks | `.venv/bin/python -m pytest tests/test_capability_learning.py tests/test_capability_application_eval.py tests/test_runbook_application_eval.py` | 36 passed |
+| Full offline regression | `.venv/bin/python -m pytest -m 'not integration and not live'` | 199 passed; 18 deselected |
+
+The immutable proposal now carries a `CapabilityBinding` (promoted capability id, version, content digest), the executed parameter set, the owned target id, and the target-class authorization (`allowed_targets` is a `owned_disposable_worker` contract enforced at execution, not an evidence reference). The `ConcurrencyReductionExecutor` revalidates the binding against the capability registry before any side effect: an unpromoted version, a tampered digest, an unbound option, a parameter set that does not match the promoted schema, or a foreign target each fails closed with a distinct reason code (covered by `test_executor_revalidates_registry_record_at_execution`). `build_option` requires the binding for capability-backed actions and rejects a mismatched capability id. Evidence scope is now deterministically enforced in both application evals: when an agent has opened a promoted record, application code rejects any final diagnosis citing a category outside the promoted required set — the `evidence_scope` directive is prompt-side steering, but the evaluation is a hard application check.
+
+The live demo re-run shows the bound proposal: the immutable option carries `capability_id: reduce_worker_concurrency`, the promoted content digest, and `target_concurrency: 4`, executes to `succeeded`, and the executor revalidated the record during execution. Contract-violation handling now first attempts `contract_violation_revision` (stripping unobserved signals from the model's own proposal) and only substitutes the reference contract when salvage is impossible; both paths are unit-tested. This proves promotion authorizing execution end to end, not merely promotion and execution occurring sequentially.

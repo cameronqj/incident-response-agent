@@ -15,6 +15,7 @@ The goal is to demonstrate observable application behavior across a realistic mu
 - Deterministic offline instrumentation tests plus separately labeled container and live-inference evidence.
 - A realistic workflow workload: synthetic disk, CPU, memory, restart-loop, and log-storm scenarios; bounded ENOSPC/OOM checks; and one real unhealthy disposable-service recovery cycle.
 - An opt-in Deep Agents path that starts from a generic site-health failure, gathers bounded evidence without receiving the injected scenario, and hands a validated diagnosis to the existing approval control plane.
+- A governed capability-learning path where a Deep Agent proposes a typed capability contract, an application-owned reviewer and deterministic gate promote it, and a later incident activates it through the existing immutable proposal, hash-bound approval, and one-target trusted executor with verification and rollback.
 
 ## Signal coverage
 
@@ -63,7 +64,7 @@ The incident workflow provides enough branching, latency, failure, approval, and
 
 ## Scope boundary
 
-This is not production incident response or a production observability platform. It does not inspect or remediate host or production processes and services, authenticate production webhooks, provide production identity or RBAC, execute model-generated commands, offer autonomous remediation, export OpenTelemetry logs, or configure a production telemetry backend. Marker removal tests workflow, policy, approval, persistence, audit, and instrumentation behavior; only the explicitly enabled container-service lab performs a real restart, and only against the service it created and owns.
+This is not production incident response or a production observability platform. It does not inspect or remediate host or production processes and services, authenticate production webhooks, provide production identity or RBAC, execute model-generated commands, offer autonomous remediation, export OpenTelemetry logs, or configure a production telemetry backend. Marker removal tests workflow, policy, approval, persistence, audit, and instrumentation behavior; only the explicitly enabled container-service lab performs a real restart, and only against the service it created and owns. The promoted capability path is a governed POC: the model proposes a typed contract, application code owns review, promotion, and executor implementation, and activation still requires the existing immutable proposal and hash-bound human approval against one owned disposable worker only.
 
 ## OpenTelemetry export
 
@@ -148,6 +149,26 @@ To compare a fresh Deep Agent investigation before and after that governed promo
 ```
 
 The command creates two LangSmith experiments over the same unfamiliar incident. The baseline has an empty approved registry; the second run gets a fresh agent and exposes only two additional read-only tools: `search_approved_runbooks` and `open_approved_runbook`. Between runs, a simulated application reviewer revises and promotes the candidate through the hidden five-case gate. The learned run must open the returned immutable version and cite its exact content digest. Pending, rejected, superseded, evaluation-failed, and digest-tampered records are not visible through the tools. Add `--no-upload` for the same live-model comparison without retaining LangSmith experiments; the automated suite separately covers the complete orchestration with scripted models.
+
+### Governed capability learning and one-target activation
+
+The capability-learning POC is the roadmap's follow-on slice: the agent proposes a typed executable capability contract, an application-owned reviewer and deterministic gate promote it, and a later incident activates it through the existing immutable proposal, hash-bound human approval, and a trusted application-owned executor. Promotion changes only the capability registry and grants no execution authority; the capability registry and the runbook registry remain separate. For a live demonstration with an explicitly simulated reviewer:
+
+```bash
+.venv/bin/python -m incident_response_agent.cli capability-learning-demo \
+  --database-path .data/capability-learning.sqlite3 \
+  --simulate-review revise-approve
+```
+
+The researcher investigates one owned disposable worker with elevated concurrency and OOM pressure through the same typed read-only diagnostics, then proposes the `reduce_worker_concurrency` capability contract (parameter bounds, one-owned-target blast radius, verification and rollback steps, bounded timeout). The simulated reviewer strips generic symptoms, approves evaluation, and the deterministic gate promotes the revision only if it passes all hidden positive and distractor cases plus policy bounds. The command then simulates a later incident whose proposal is bound by the promoted capability, waits for `approve`, activates the concurrency reduction on the owned worker, and verifies health. Add `--fail-verification` to force the post-activation health check to fail so the bounded rollback restores the previous concurrency and records an auditable `rollback_applied` outcome. Use `--simulate-review approve` to demonstrate that human approval alone cannot bypass a failing gate, or `reject` to demonstrate terminal rejection. Concrete runtime parameter values are chosen by application code and bound into the existing action hash; the model never supplies a command, path, target, or runtime value. See [`docs/full-sre-agent.md`](docs/full-sre-agent.md) and ADR 009.
+
+To measure whether retrieval actually changes a fresh investigation, compare before and after governed promotion:
+
+```bash
+.venv/bin/python -m incident_response_agent.cli capability-application-eval
+```
+
+The baseline has an empty approved registry; between runs a live researcher proposes a capability candidate, the simulated reviewer revises and promotes it through the hidden five-case gate, and the second fresh agent gets two additional read-only tools: `search_approved_capabilities` and `open_approved_capability`. Opening a promoted capability returns an `evidence_scope` contract — cite only observations in its `required_evidence_categories` — so retrieval steers evidence selection, not just the action. The learned run must open the returned immutable version and cite its exact content digest; a citation that was not opened in the same thread is rejected. Add `--no-upload` for the same live-model comparison without retaining LangSmith experiments; the automated suite covers the complete orchestration with scripted models.
 
 For a real disposable-service recovery cycle, use a bearer token and a working Podman/Docker engine. The command displays the immutable proposal and waits for `approve` before restarting anything:
 

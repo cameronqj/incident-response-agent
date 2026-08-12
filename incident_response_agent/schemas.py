@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from enum import Enum
 from typing import Annotated, Any, Dict, List, Optional
@@ -14,6 +15,7 @@ class Scenario(str, Enum):
     MEMORY_OOM = "memory-oom"
     RESTARTING_SERVICE = "restarting-service"
     LOG_STORM = "log-storm"
+    WORKER_CONCURRENCY = "worker-concurrency"
 
 
 class ScenarioKind(str, Enum):
@@ -116,6 +118,8 @@ class TelemetryEvidence(BaseModel):
     runaway_process_detected: bool = False
     service_state: Optional[str] = None
     restart_count: int = Field(default=0, ge=0)
+    worker_concurrency: Optional[int] = Field(default=None, ge=0)
+    safe_worker_concurrency: Optional[int] = Field(default=None, ge=0)
     signals: List[str] = Field(default_factory=list)
     fault_injection: Optional[str] = None
 
@@ -130,6 +134,20 @@ class ModelAssessment(BaseModel):
     action_id: str = Field(min_length=1, max_length=128)
 
 
+class CapabilityBinding(BaseModel):
+    """The promoted capability version that authorizes a capability-backed action.
+
+    Bound into the immutable proposal so approval covers the exact promoted
+    record; revalidated against the capability registry at execution time.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    capability_id: str = Field(min_length=3, max_length=128, pattern=r"^[a-z0-9][a-z0-9_.-]+$")
+    version: int = Field(ge=1)
+    content_digest: str = Field(min_length=64, max_length=64)
+
+
 class RemediationOption(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -140,6 +158,25 @@ class RemediationOption(BaseModel):
     impact: str
     risk: str
     action_preview: str
+    parameters: Optional[Dict[str, Any]] = Field(default=None, max_length=4)
+    target_id: Optional[str] = Field(default=None, max_length=128, pattern=r"^[a-z0-9_-]+$")
+    capability: Optional[CapabilityBinding] = None
+
+    @field_validator("parameters")
+    @classmethod
+    def parameters_must_be_bounded(cls, value: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if value is None:
+            return value
+        for key, item in value.items():
+            if not (1 <= len(key) <= 64) or not re.fullmatch(r"^[a-z][a-z0-9_]*$", key):
+                raise ValueError("remediation parameter name is not bounded")
+            if isinstance(item, bool) or not isinstance(item, (int, str)):
+                raise ValueError("remediation parameter value must be a bounded integer or string")
+            if isinstance(item, int) and not (-(2**31) <= item < 2**31):
+                raise ValueError("remediation integer parameter is out of bounds")
+            if isinstance(item, str) and not (1 <= len(item) <= 128):
+                raise ValueError("remediation string parameter is out of bounds")
+        return value
 
 
 class DecisionRequest(BaseModel):
