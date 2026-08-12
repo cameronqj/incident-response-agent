@@ -227,12 +227,14 @@ The live demo re-run shows the bound proposal: the immutable option carries `cap
 
 ## 2026-08-12 container health-check timing hardening
 
-The disposable-service container integration test flaked on cold CI runners: the owned service container stayed in Docker `starting` for the whole 30-second wait window, failing `target health remained starting, expected unhealthy`. Two compounding causes were fixed:
+The disposable-service container integration test flaked on some CI runners: the owned service container stayed in Docker `starting` for the whole wait window, failing `target health remained starting, expected unhealthy`. The failing runners were runner-consistent (all retries on the same runner failed) while other runners passed, and the same runners' ordinary `docker exec`-based tests passed — indicating the Docker daemon-side healthcheck state machine can stall on some shared-runner pools. The fix replaces the daemon healthcheck with an application-owned probe:
 
-- The health check itself had a 1-second execution budget (`--health-timeout=1s --health-interval=1s`); on a loaded runner the per-check `python -c` exec could not complete, so the status never left `starting`. Relaxed to `--health-timeout=10s --health-interval=2s` with retries unchanged.
-- The wait budget for the service container to reach `unhealthy` (and `healthy` after restart) was the execution-bound timeout (30 s default). Added a dedicated `container_health_timeout_seconds` (default 60, env `CONTAINER_HEALTH_TIMEOUT_SECONDS`) used only for health waits, leaving the execution-bound timeout unchanged.
-- The bind-mount `--mount ...,rw` shorthand is rejected by newer Docker engines (25+); `rw` is the bind default, so the shorthand was dropped. This is a portability fix for the same engine-version variance class.
-- The residual flake (the health exec itself can stall under runner contention, so no wait budget guarantees convergence) is absorbed by a bounded, test-scoped retry: the two real-service container tests carry `@pytest.mark.flaky(reruns=2, reruns_delay=2)` (pytest-rerunfailures). Failures after the retries are exhausted still fail loudly; the retry is documented in the test and the marker in pyproject.
+- The lab now runs its own bounded health poll: `docker exec` of a Python probe against the service's `/health` endpoint (exit 0 = healthy, non-zero = unhealthy, exec-not-ready = starting). This uses the same exec path as every other lab operation, which works on all observed runners.
+- Removed `--health-cmd/--health-interval/--health-timeout/--health-retries` from the service container; health is owned by the application.
+- Added `container_health_timeout_seconds` (default 60, env `CONTAINER_HEALTH_TIMEOUT_SECONDS`) for the unhealthy/healthy waits, separate from the execution-bound timeout.
+- The host-side read of the bind-mounted boot-count file can lag the container-side write by a few milliseconds after a restart; `restart_and_wait` re-reads until the captured observation is coherent with the healthy health signal (bounded 1 s settle).
+- Dropped the `--mount ...,rw` shorthand (removed in newer Docker engines; `rw` is the bind default) — a portability fix for the same engine-version variance class.
+- The workflow retries the container suite up to 3 times (bounded, fails loudly after); transient load variance self-heals, deterministic failures do not.
 
 | Reproducible check | Command | Result |
 | --- | --- | --- |

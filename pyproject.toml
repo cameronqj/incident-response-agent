@@ -27,7 +27,6 @@ dev = [
   "httpx>=0.27,<1",
   "pytest>=9.0.3,<10",
   "pytest-asyncio>=1.4,<2",
-  "pytest-rerunfailures>=14,<16",
 ]
 
 [project.scripts]
@@ -42,5 +41,4 @@ addopts = "-q"
 markers = [
   "integration: requires a working Docker or Podman engine",
   "live: calls the configured external model and requires network access and credentials",
-  "flaky: bounded retry for container health timing on contended shared CI runners",
 ]
