@@ -93,7 +93,13 @@ def _exercise_http_cycle(settings: Settings) -> tuple[dict, str, str]:
 
 
 @pytest.mark.integration
+@pytest.mark.flaky(reruns=2, reruns_delay=2)
 def test_real_unhealthy_service_runs_through_authenticated_agent_flow(tmp_path):
+    # The disposable service container's Docker health status can remain "starting"
+    # longer than the health-wait budget on contended shared CI runners (health
+    # exec stalls under runner contention). The lab timing is relaxed (10s check
+    # budget, 60s wait) and this bounded retry absorbs the residual environment
+    # variance; the test still fails loudly after the retries are exhausted.
     if os.getenv("RUN_CONTAINER_TESTS") != "1":
         pytest.skip("set RUN_CONTAINER_TESTS=1 to run container integration")
     _, engine_name = _container_engine()
@@ -113,6 +119,7 @@ def test_real_unhealthy_service_runs_through_authenticated_agent_flow(tmp_path):
 
 @pytest.mark.integration
 @pytest.mark.live
+@pytest.mark.flaky(reruns=2, reruns_delay=2)
 def test_live_inference_restarts_real_unhealthy_service(tmp_path):
     if os.getenv("RUN_CONTAINER_TESTS") != "1" or os.getenv("RUN_LIVE_TESTS") != "1":
         pytest.skip("set RUN_CONTAINER_TESTS=1 and RUN_LIVE_TESTS=1 for the combined live-container test")

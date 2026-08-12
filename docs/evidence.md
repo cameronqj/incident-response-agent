@@ -232,6 +232,7 @@ The disposable-service container integration test flaked on cold CI runners: the
 - The health check itself had a 1-second execution budget (`--health-timeout=1s --health-interval=1s`); on a loaded runner the per-check `python -c` exec could not complete, so the status never left `starting`. Relaxed to `--health-timeout=10s --health-interval=2s` with retries unchanged.
 - The wait budget for the service container to reach `unhealthy` (and `healthy` after restart) was the execution-bound timeout (30 s default). Added a dedicated `container_health_timeout_seconds` (default 60, env `CONTAINER_HEALTH_TIMEOUT_SECONDS`) used only for health waits, leaving the execution-bound timeout unchanged.
 - The bind-mount `--mount ...,rw` shorthand is rejected by newer Docker engines (25+); `rw` is the bind default, so the shorthand was dropped. This is a portability fix for the same engine-version variance class.
+- The residual flake (the health exec itself can stall under runner contention, so no wait budget guarantees convergence) is absorbed by a bounded, test-scoped retry: the two real-service container tests carry `@pytest.mark.flaky(reruns=2, reruns_delay=2)` (pytest-rerunfailures). Failures after the retries are exhausted still fail loudly; the retry is documented in the test and the marker in pyproject.
 
 | Reproducible check | Command | Result |
 | --- | --- | --- |
